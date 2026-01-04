@@ -41,6 +41,12 @@ class PaperTradingConfig:
     min_time_remaining_sec: int = 120  # Don't trade in last 2 minutes
     cooldown_sec: int = 30  # Seconds between trades per symbol
 
+    # Confirmation requirements (momentum must align with price move)
+    require_volume_confirmation: bool = True  # Volume delta must support direction
+    require_orderbook_confirmation: bool = True  # Order book imbalance must support
+    min_volume_delta_usd: float = 10000.0  # Minimum $10K volume delta
+    min_orderbook_imbalance: float = 0.1  # 10% imbalance threshold
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -627,7 +633,12 @@ class PaperTradingEngine:
         Process a potential latency arbitrage opportunity.
 
         This is the main entry point called every 1-2 seconds.
-        It checks for edge and executes if conditions are met.
+        It checks for edge and CONFIRMS with momentum indicators before executing.
+
+        Confirmation requires:
+        1. Price edge above threshold (Binance moved, Polymarket lagging)
+        2. Volume delta supports direction (aggressive buyers/sellers)
+        3. Order book imbalance supports direction
         """
         if not self.config.enabled:
             return None
@@ -674,37 +685,83 @@ class PaperTradingEngine:
         if abs_edge < min_edge:
             return None
 
+        # Determine intended direction from price gap
+        price_direction = "UP" if gap.binance_change_pct > 0 else "DOWN"
+
+        # =====================================================================
+        # MOMENTUM CONFIRMATION - Don't trade noise!
+        # The price move must be confirmed by volume and order book
+        # =====================================================================
+
+        volume_delta = momentum.get("volume_delta", 0) if momentum else 0
+        orderbook_imbalance = momentum.get("orderbook_imbalance", 0) if momentum else 0
+
+        # Check volume confirmation
+        if self.config.require_volume_confirmation:
+            # Volume delta should align with price direction
+            if price_direction == "UP":
+                # Need positive volume delta (more buying pressure)
+                if volume_delta < self.config.min_volume_delta_usd:
+                    return None  # Not enough buying conviction
+            else:
+                # Need negative volume delta (more selling pressure)
+                if volume_delta > -self.config.min_volume_delta_usd:
+                    return None  # Not enough selling conviction
+
+        # Check order book confirmation
+        if self.config.require_orderbook_confirmation:
+            # Order book imbalance should align with price direction
+            if price_direction == "UP":
+                # Need positive imbalance (more bids than asks)
+                if orderbook_imbalance < self.config.min_orderbook_imbalance:
+                    return None  # Order book doesn't support upward move
+            else:
+                # Need negative imbalance (more asks than bids)
+                if orderbook_imbalance > -self.config.min_orderbook_imbalance:
+                    return None  # Order book doesn't support downward move
+
+        # =====================================================================
+        # All confirmations passed - this is a real trend, not noise
+        # =====================================================================
+
         # Determine signal type
         if gap.edge > min_edge:
-            # Binance is up, Polymarket hasn't adjusted -> buy UP
             signal_type = SignalType.BUY_UP
             entry_price = polymarket_up_price
             side = "UP"
         elif gap.edge < -min_edge:
-            # Binance is down, Polymarket hasn't adjusted -> buy DOWN
             signal_type = SignalType.BUY_DOWN
             entry_price = 1 - polymarket_up_price
             side = "DOWN"
         else:
             return None
 
-        # Calculate confidence from edge magnitude
-        confidence = min(1.0, abs_edge * 5)  # 20% edge = 100% confidence
+        # Calculate confidence from edge + confirmation strength
+        edge_confidence = min(1.0, abs_edge * 5)  # 20% edge = 100%
+        volume_confidence = min(1.0, abs(volume_delta) / 50000)  # $50K = 100%
+        book_confidence = min(1.0, abs(orderbook_imbalance) * 3)  # 33% imbalance = 100%
 
-        # Build momentum dict from gap data
+        # Combined confidence weights edge more heavily
+        confidence = (edge_confidence * 0.5) + (volume_confidence * 0.3) + (book_confidence * 0.2)
+
+        # Build momentum dict from gap data + confirmations
         gap_momentum = {
-            "direction": "UP" if gap.binance_change_pct > 0 else "DOWN",
-            "confidence": confidence,
-            "volume_delta": 0,
+            "direction": price_direction,
+            "confidence": round(confidence, 3),
+            "volume_delta": volume_delta,
             "price_change_pct": gap.binance_change_pct,
-            "orderbook_imbalance": 0,
+            "orderbook_imbalance": orderbook_imbalance,
             "binance_open": gap.binance_open,
             "binance_current": gap.binance_current,
             "time_remaining": gap.time_remaining_sec,
+            "confirmed_by": [],
         }
 
-        if momentum:
-            gap_momentum.update(momentum)
+        # Track what confirmed the signal
+        if abs(volume_delta) >= self.config.min_volume_delta_usd:
+            gap_momentum["confirmed_by"].append("volume_delta")
+        if abs(orderbook_imbalance) >= self.config.min_orderbook_imbalance:
+            gap_momentum["confirmed_by"].append("orderbook")
 
         signal = CheckpointSignal(
             symbol=symbol,

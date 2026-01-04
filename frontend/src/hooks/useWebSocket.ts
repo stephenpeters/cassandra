@@ -9,6 +9,11 @@ import type {
   MomentumSignal,
   WhaleTrade,
   WhaleInfo,
+  Markets15MinData,
+  MarketTrade,
+  PaperAccount,
+  PaperSignal,
+  PaperTradingConfig,
 } from "@/types";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
@@ -23,12 +28,20 @@ export interface UseWebSocketReturn {
   whaleTrades: WhaleTrade[];
   whales: WhaleInfo[];
   symbols: string[];
+  markets15m: Markets15MinData | null;
+  marketTrades: MarketTrade[];
+  paperAccount: PaperAccount | null;
+  paperSignals: PaperSignal[];
+  paperConfig: PaperTradingConfig | null;
   requestCandles: (symbol: string) => void;
+  togglePaperTrading: () => Promise<void>;
+  resetPaperAccount: () => Promise<void>;
+  updatePaperConfig: (config: Partial<PaperTradingConfig>) => Promise<void>;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
   const ws = useRef<WebSocket | null>(null);
-  const reconnectTimeout = useRef<NodeJS.Timeout>();
+  const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
   const [candles, setCandles] = useState<Record<string, CandleData[]>>({});
@@ -40,6 +53,11 @@ export function useWebSocket(): UseWebSocketReturn {
   const [whaleTrades, setWhaleTrades] = useState<WhaleTrade[]>([]);
   const [whales, setWhales] = useState<WhaleInfo[]>([]);
   const [symbols, setSymbols] = useState<string[]>([]);
+  const [markets15m, setMarkets15m] = useState<Markets15MinData | null>(null);
+  const [marketTrades, setMarketTrades] = useState<MarketTrade[]>([]);
+  const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null);
+  const [paperSignals, setPaperSignals] = useState<PaperSignal[]>([]);
+  const [paperConfig, setPaperConfig] = useState<PaperTradingConfig | null>(null);
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return;
@@ -83,6 +101,7 @@ export function useWebSocket(): UseWebSocketReturn {
       case "init":
         if (msg.whales) setWhales(msg.whales);
         if (msg.symbols) setSymbols(msg.symbols);
+        if (msg.paper_trading) setPaperAccount(msg.paper_trading);
         break;
 
       case "candle":
@@ -152,6 +171,44 @@ export function useWebSocket(): UseWebSocketReturn {
         }
         break;
 
+      case "markets_15m":
+        if (msg.data) {
+          const data = msg.data as Markets15MinData;
+          setMarkets15m(data);
+          if (data.trades) {
+            setMarketTrades(data.trades);
+          }
+        }
+        break;
+
+      case "market_trade":
+        if (msg.data) {
+          const trade = msg.data as MarketTrade;
+          setMarketTrades((prev) => [trade, ...prev.slice(0, 99)]);
+        }
+        break;
+
+      case "paper_account":
+        if (msg.data) {
+          setPaperAccount(msg.data as PaperAccount);
+        }
+        break;
+
+      case "paper_signal":
+        if (msg.data) {
+          const signal = msg.data as PaperSignal;
+          setPaperSignals((prev) => [signal, ...prev.slice(0, 49)]);
+        }
+        break;
+
+      case "paper_trade":
+        // Trade completed - account will be updated via paper_account message
+        break;
+
+      case "paper_position":
+        // Position opened - account will be updated via paper_account message
+        break;
+
       case "ping":
         ws.current?.send(JSON.stringify({ type: "pong" }));
         break;
@@ -168,6 +225,57 @@ export function useWebSocket(): UseWebSocketReturn {
       );
     }
   }, []);
+
+  // Paper trading API functions
+  const togglePaperTrading = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/paper-trading/toggle`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPaperConfig((prev) =>
+          prev ? { ...prev, enabled: data.enabled } : null
+        );
+      }
+    } catch (e) {
+      console.error("Failed to toggle paper trading:", e);
+    }
+  }, []);
+
+  const resetPaperAccount = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/paper-trading/reset`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPaperAccount(data.account);
+        setPaperSignals([]);
+      }
+    } catch (e) {
+      console.error("Failed to reset paper account:", e);
+    }
+  }, []);
+
+  const updatePaperConfig = useCallback(
+    async (config: Partial<PaperTradingConfig>) => {
+      try {
+        const res = await fetch(`${API_URL}/api/paper-trading/config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPaperConfig(data.config);
+        }
+      } catch (e) {
+        console.error("Failed to update paper config:", e);
+      }
+    },
+    []
+  );
 
   // Initial connection
   useEffect(() => {
@@ -222,6 +330,23 @@ export function useWebSocket(): UseWebSocketReturn {
     fetchWhaleTrades();
   }, []);
 
+  // Fetch paper trading config
+  useEffect(() => {
+    const fetchPaperConfig = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/paper-trading/config`);
+        if (res.ok) {
+          const data = await res.json();
+          setPaperConfig(data);
+        }
+      } catch (e) {
+        console.error("Failed to fetch paper config:", e);
+      }
+    };
+
+    fetchPaperConfig();
+  }, []);
+
   return {
     isConnected,
     candles,
@@ -231,6 +356,14 @@ export function useWebSocket(): UseWebSocketReturn {
     whaleTrades,
     whales,
     symbols,
+    markets15m,
+    marketTrades,
+    paperAccount,
+    paperSignals,
+    paperConfig,
     requestCandles,
+    togglePaperTrading,
+    resetPaperAccount,
+    updatePaperConfig,
   };
 }

@@ -203,7 +203,8 @@ class BinanceFeed:
                 f"{symbol}@depth5@100ms",    # Top 5 order book levels
             ])
         stream_str = "/".join(streams)
-        return f"{CryptoExchangeAPI.BINANCE_WS}/{stream_str}"
+        # Use /stream?streams= for combined streams
+        return f"wss://stream.binance.com:9443/stream?streams={stream_str}"
 
     async def connect(self):
         """Connect to Binance WebSocket"""
@@ -515,3 +516,329 @@ async def fetch_historical_candles(
                 }
                 for k in data
             ]
+
+
+# ============================================================================
+# POLYMARKET 15-MIN MARKET FEED
+# ============================================================================
+
+@dataclass
+class Market15Min:
+    """A Polymarket 15-minute crypto up/down market"""
+    condition_id: str
+    token_id: str
+    question: str
+    symbol: str  # BTC, ETH, SOL, etc.
+    outcome: str  # "Up" or "Down"
+    start_time: datetime
+    end_time: datetime
+    price: float  # Current price (probability)
+    volume: float
+    is_active: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "condition_id": self.condition_id,
+            "token_id": self.token_id,
+            "question": self.question,
+            "symbol": self.symbol,
+            "outcome": self.outcome,
+            "start_time": int(self.start_time.timestamp()),
+            "end_time": int(self.end_time.timestamp()),
+            "price": self.price,
+            "volume": self.volume,
+            "is_active": self.is_active,
+        }
+
+
+@dataclass
+class MarketTrade:
+    """A trade on a Polymarket 15-min market"""
+    condition_id: str
+    symbol: str
+    outcome: str  # "Up" or "Down"
+    side: str  # "BUY" or "SELL"
+    size: float
+    price: float
+    timestamp: int
+    maker: str
+    taker: str
+
+    @property
+    def usd_value(self) -> float:
+        return self.size * self.price
+
+    def to_dict(self) -> dict:
+        return {
+            "condition_id": self.condition_id,
+            "symbol": self.symbol,
+            "outcome": self.outcome,
+            "side": self.side,
+            "size": self.size,
+            "price": self.price,
+            "usd_value": self.usd_value,
+            "timestamp": self.timestamp,
+            "maker": self.maker[:10] + "..." if len(self.maker) > 10 else self.maker,
+            "taker": self.taker[:10] + "..." if len(self.taker) > 10 else self.taker,
+        }
+
+
+class Polymarket15MinFeed:
+    """
+    Tracks active Polymarket 15-minute crypto markets and their trades.
+    All 5 crypto markets (BTC, ETH, SOL, XRP, DOGE) operate on the same
+    15-minute windows starting at :00, :15, :30, :45.
+
+    Market slugs follow the pattern: {symbol}-updown-15m-{timestamp}
+    where timestamp is the Unix epoch of the window start time.
+    """
+
+    # Crypto symbols for 15-min markets
+    CRYPTO_SYMBOLS = ["btc", "eth", "sol", "xrp", "doge"]
+
+    def __init__(self):
+        self.running = False
+        self.active_markets: dict[str, Market15Min] = {}  # symbol -> market
+        self.market_trades: deque[MarketTrade] = deque(maxlen=500)
+        self.last_trade_ids: dict[str, str] = {}  # condition_id -> last trade id
+        self._last_window: int = 0  # Track last fetched window to avoid duplicate fetches
+
+        # Callbacks
+        self.on_market_update: Optional[Callable[[Market15Min], None]] = None
+        self.on_market_trade: Optional[Callable[[MarketTrade], None]] = None
+
+    def _get_current_window(self) -> int:
+        """Get the current 15-minute window timestamp"""
+        now = int(time.time())
+        return (now // 900) * 900
+
+    async def start(self, poll_interval: float = 2.0):
+        """Start polling for active markets and trades"""
+        self.running = True
+
+        async with aiohttp.ClientSession() as session:
+            while self.running:
+                try:
+                    # Fetch active 15-min markets using slug-based discovery
+                    await self._fetch_active_markets(session)
+
+                    # Fetch recent trades for each active market
+                    await self._fetch_market_trades(session)
+
+                except Exception as e:
+                    print(f"[Polymarket15Min] Error: {e}")
+
+                await asyncio.sleep(poll_interval)
+
+    async def _fetch_active_markets(self, session: aiohttp.ClientSession):
+        """
+        Fetch currently active 15-minute markets using slug-based discovery.
+
+        Market slugs follow pattern: {symbol}-updown-15m-{timestamp}
+        Example: btc-updown-15m-1767460500
+        """
+        current_window = self._get_current_window()
+
+        # Fetch markets for current and next window
+        windows_to_fetch = [current_window, current_window + 900]
+
+        for symbol in self.CRYPTO_SYMBOLS:
+            for window in windows_to_fetch:
+                slug = f"{symbol}-updown-15m-{window}"
+
+                try:
+                    url = f"{PolymarketAPI.GAMMA_API}/markets"
+                    params = {"slug": slug}
+                    headers = {"User-Agent": "Mozilla/5.0"}
+
+                    async with session.get(url, params=params, headers=headers, timeout=10) as resp:
+                        if resp.status != 200:
+                            continue
+
+                        markets = await resp.json()
+
+                        if markets and len(markets) > 0:
+                            market = markets[0]
+                            await self._parse_market(symbol.upper(), market, window)
+
+                except Exception as e:
+                    # Silently continue on individual market fetch errors
+                    pass
+
+    async def _parse_market(self, symbol: str, market: dict, window_timestamp: int):
+        """
+        Parse market data and update active markets.
+
+        Args:
+            symbol: Crypto symbol (BTC, ETH, etc.)
+            market: Market data from Gamma API
+            window_timestamp: The 15-minute window start timestamp
+        """
+        try:
+            condition_id = market.get("conditionId", "")
+            question = market.get("question", "")
+            volume = float(market.get("volume", 0) or 0)
+
+            # Parse eventStartTime for accurate timing
+            event_start_str = market.get("eventStartTime", "")
+            if event_start_str:
+                start_time = datetime.fromisoformat(event_start_str.replace("Z", "+00:00"))
+                # Convert to timestamp for consistent handling
+                start_ts = int(start_time.timestamp())
+            else:
+                # Fallback to window timestamp
+                start_ts = window_timestamp
+                start_time = datetime.fromtimestamp(start_ts)
+
+            # End time is 15 minutes after start
+            end_ts = start_ts + 900
+            end_time = datetime.fromtimestamp(end_ts)
+
+            # Check if market is currently active (using timestamps to avoid timezone issues)
+            now_ts = int(time.time())
+            is_active = start_ts <= now_ts <= end_ts
+
+            # Get price from outcomePrices (first is "Up")
+            outcome_prices = market.get("outcomePrices", "[0.5, 0.5]")
+            try:
+                import json as json_module
+                prices = json_module.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+                up_price = float(prices[0]) if prices else 0.5
+            except:
+                up_price = 0.5
+
+            # Get CLOB token IDs
+            clob_token_ids = market.get("clobTokenIds", "[]")
+            try:
+                import json as json_module
+                token_ids = json_module.loads(clob_token_ids) if isinstance(clob_token_ids, str) else clob_token_ids
+                up_token_id = token_ids[0] if token_ids else ""
+            except:
+                up_token_id = ""
+
+            mkt = Market15Min(
+                condition_id=condition_id,
+                token_id=up_token_id,
+                question=question,
+                symbol=symbol,
+                outcome="Up",
+                start_time=start_time,
+                end_time=end_time,
+                price=up_price,
+                volume=volume,
+                is_active=is_active,
+            )
+
+            # Only update if this is for the current window
+            current_window = self._get_current_window()
+            if window_timestamp == current_window:
+                self.active_markets[symbol] = mkt
+
+                if self.on_market_update:
+                    self.on_market_update(mkt)
+
+        except Exception as e:
+            print(f"[Polymarket15Min] Error parsing market for {symbol}: {e}")
+
+    async def _fetch_market_trades(self, session: aiohttp.ClientSession):
+        """Fetch recent trades for active markets"""
+        for symbol, market in self.active_markets.items():
+            if not market.is_active:
+                continue
+
+            try:
+                # Get recent trades for this market
+                url = f"{PolymarketAPI.DATA_API}/trades"
+                params = {
+                    "market": market.condition_id,
+                    "limit": 50,
+                }
+
+                async with session.get(url, params=params, timeout=10) as resp:
+                    if resp.status != 200:
+                        continue
+
+                    trades = await resp.json()
+
+                    for trade_data in trades:
+                        trade_id = trade_data.get("id", "") or trade_data.get("transactionHash", "")
+
+                        # Skip if we've already seen this trade
+                        if self.last_trade_ids.get(market.condition_id) == trade_id:
+                            break
+
+                        # Parse trade
+                        trade = self._parse_trade(market, trade_data)
+                        if trade:
+                            self.market_trades.appendleft(trade)
+
+                            if self.on_market_trade:
+                                self.on_market_trade(trade)
+
+                    # Update last seen trade
+                    if trades:
+                        self.last_trade_ids[market.condition_id] = trades[0].get("id", "") or trades[0].get("transactionHash", "")
+
+            except Exception as e:
+                print(f"[Polymarket15Min] Error fetching trades for {symbol}: {e}")
+
+    def _parse_trade(self, market: Market15Min, data: dict) -> Optional[MarketTrade]:
+        """Parse raw trade data into MarketTrade"""
+        try:
+            outcome = data.get("outcome", "")
+            # Determine if this is an Up or Down trade
+            is_up = "up" in outcome.lower() if outcome else True
+
+            return MarketTrade(
+                condition_id=market.condition_id,
+                symbol=market.symbol,
+                outcome="Up" if is_up else "Down",
+                side=data.get("side", "BUY"),
+                size=float(data.get("size", 0) or 0),
+                price=float(data.get("price", 0) or 0),
+                timestamp=int(data.get("timestamp", 0) or time.time()),
+                maker=data.get("maker", ""),
+                taker=data.get("taker", ""),
+            )
+        except Exception:
+            return None
+
+    def get_active_markets(self) -> dict[str, dict]:
+        """Get all active 15-min markets"""
+        return {sym: mkt.to_dict() for sym, mkt in self.active_markets.items()}
+
+    def get_recent_trades(self, symbol: Optional[str] = None, limit: int = 50) -> list[dict]:
+        """Get recent market trades, optionally filtered by symbol"""
+        trades = list(self.market_trades)
+        if symbol:
+            trades = [t for t in trades if t.symbol == symbol]
+        return [t.to_dict() for t in trades[:limit]]
+
+    def get_next_market_time(self) -> dict:
+        """Get timing info for the next 15-minute market window"""
+        now = datetime.now()
+        minutes = now.minute
+
+        # Next window starts at next :00, :15, :30, or :45
+        next_slot = ((minutes // 15) + 1) * 15
+        start = now.replace(second=0, microsecond=0)
+
+        if next_slot >= 60:
+            start = start.replace(minute=0)
+            start = start.replace(hour=start.hour + 1)
+        else:
+            start = start.replace(minute=next_slot)
+
+        end = datetime.fromtimestamp(start.timestamp() + 900)
+        time_until_start = (start - now).total_seconds()
+
+        return {
+            "start": int(start.timestamp()),
+            "end": int(end.timestamp()),
+            "time_until_start": max(0, int(time_until_start)),
+            "is_open": time_until_start <= 0,
+        }
+
+    def stop(self):
+        """Stop the feed"""
+        self.running = False

@@ -54,6 +54,127 @@ export interface WhaleInfo {
   focus?: string[];
 }
 
+// 15-minute market types
+export interface Market15Min {
+  condition_id: string;
+  token_id: string;
+  question: string;
+  symbol: string;
+  outcome: string;
+  start_time: number;
+  end_time: number;
+  price: number;
+  volume: number;
+  is_active: boolean;
+}
+
+export interface MarketTrade {
+  condition_id: string;
+  symbol: string;
+  outcome: string;
+  side: "BUY" | "SELL";
+  size: number;
+  price: number;
+  usd_value: number;
+  timestamp: number;
+  maker: string;
+  taker: string;
+}
+
+export interface MarketTiming {
+  start: number;
+  end: number;
+  time_until_start: number;
+  is_open: boolean;
+}
+
+export interface Markets15MinData {
+  active: Record<string, Market15Min>;
+  timing: MarketTiming;
+  trades: MarketTrade[];
+}
+
+// Paper Trading types
+export type PaperSignalType = "HOLD" | "BUY_UP" | "BUY_MORE_UP" | "BUY_DOWN" | "BUY_MORE_DOWN";
+
+export interface PaperTradingConfig {
+  enabled: boolean;
+  starting_balance: number;
+  slippage_pct: number;
+  commission_pct: number;
+  max_position_pct: number;
+  daily_loss_limit_pct: number;
+}
+
+export interface PaperPosition {
+  id: string;
+  symbol: string;
+  side: "UP" | "DOWN";
+  entry_price: number;
+  size: number;
+  cost_basis: number;
+  entry_time: number;
+  market_start: number;
+  market_end: number;
+  checkpoint: string;
+}
+
+export interface PaperTrade {
+  id: string;
+  symbol: string;
+  side: "UP" | "DOWN";
+  entry_price: number;
+  exit_price: number;
+  size: number;
+  cost_basis: number;
+  settlement_value: number;
+  pnl: number;
+  pnl_pct: number;
+  entry_time: number;
+  exit_time: number;
+  market_start: number;
+  market_end: number;
+  resolution: "UP" | "DOWN";
+  binance_open: number;
+  binance_close: number;
+  checkpoint: string;
+  signal_confidence: number;
+}
+
+export interface PaperSignal {
+  symbol: string;
+  checkpoint: string;
+  timestamp: number;
+  signal: PaperSignalType;
+  fair_value: number;
+  market_price: number;
+  edge: number;
+  confidence: number;
+  momentum: {
+    direction: string;
+    confidence: number;
+    volume_delta: number;
+    price_change_pct: number;
+    orderbook_imbalance: number;
+  };
+}
+
+export interface PaperAccount {
+  balance: number;
+  starting_balance: number;
+  total_pnl: number;
+  today_pnl: number;
+  total_return_pct: number;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  positions: PaperPosition[];
+  recent_trades: PaperTrade[];
+  trading_halted: boolean;
+  halt_reason: string;
+}
+
 export interface WebSocketMessage {
   type:
     | "init"
@@ -63,6 +184,13 @@ export interface WebSocketMessage {
     | "momentum"
     | "whale_trade"
     | "candles_snapshot"
+    | "markets_15m"
+    | "market_update"
+    | "market_trade"
+    | "paper_account"
+    | "paper_signal"
+    | "paper_trade"
+    | "paper_position"
     | "ping"
     | "pong";
   symbol?: string;
@@ -70,4 +198,5 @@ export interface WebSocketMessage {
   whales?: WhaleInfo[];
   symbols?: string[];
   candles?: CandleData[];
+  paper_trading?: PaperAccount;
 }

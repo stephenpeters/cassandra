@@ -12,46 +12,97 @@ from typing import Optional
 
 # Known whale wallets - sources from research and Polymarket leaderboard
 WHALE_WALLETS = {
-    # Verified crypto market traders
+    # =========================================================================
+    # TOP CRYPTO 15-MIN TRADERS (by recent volume)
+    # =========================================================================
+
     "gabagool22": {
         "address": "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d",
-        "strategy": "News sniping, asymmetric scalping",
+        "strategy": "News sniping, momentum. Fast entry <1min on strong momo, 3-5min on weaker",
         "focus": ["crypto", "politics"],
         "notes": "Top performer on crypto up/down markets",
     },
 
-    # French whale (Théo) - 11 connected accounts
-    # Made $85M on 2024 election, $30M in total bets
+    "Account88888": {
+        "address": "0x7f69983eb28245bba0d5083502a78744a8f66162",
+        "strategy": "Sequential entry arbitrage, waits 5-7min for confirmation",
+        "focus": ["crypto"],
+        "notes": "$324K profit in 25 days, suspected Jane Street quant",
+    },
+
+    "PurpleThunderBicycleMountain": {
+        "address": "0x589222a5124a96765443b97a3498d89ffd824ad2",
+        "strategy": "Multi-asset crypto 15-min",
+        "focus": ["crypto"],
+        "notes": "High volume: SOL, XRP, BTC markets, 95 trades",
+    },
+
+    "updateupdate": {
+        "address": "0xd0d6053c3c37e727402d84c14069780d360993aa",
+        "strategy": "BTC-focused 15-min",
+        "focus": ["crypto"],
+        "notes": "35 trades, BTC specialist",
+    },
+
+    "soratin": {
+        "address": "0x60aaaafa018e46cee26ead8afc8e5506d53b0df0",
+        "strategy": "Multi-asset crypto 15-min",
+        "focus": ["crypto"],
+        "notes": "ETH, BTC, XRP - 45 trades",
+    },
+
+    "BoshBashBish": {
+        "address": "0x29bc82f761749e67fa00d62896bc6855097b683c",
+        "strategy": "XRP and BTC 15-min",
+        "focus": ["crypto"],
+        "notes": "24 trades",
+    },
+
+    "distinct-baguette": {
+        "address": "0xe00740bce98a594e265f3c07ff0b55a55ad47e4f",
+        "strategy": "Cross-market arbitrage",
+        "focus": ["crypto"],
+        "notes": "$50K+ arb profits, SOL/XRP focus",
+    },
+
+    "jdkfbsbdskjbfjksq": {
+        "address": "0xb1198968d144997367fe23c14f3730348075680b",
+        "strategy": "High-frequency BTC 15-min",
+        "focus": ["crypto"],
+        "notes": "128 trades - very active",
+    },
+
+    "b1gGambler": {
+        "address": "0x8ac1eaed0399f8332f05d4e6e3c0db1eb8cf15fb",
+        "strategy": "BTC 15-min",
+        "focus": ["crypto"],
+        "notes": "34 trades",
+    },
+
+    "ProfitGoblin": {
+        "address": "0x2a97fb7142ef565b4b1bc823c4a62f5b1fe07eaf",
+        "strategy": "BTC 15-min",
+        "focus": ["crypto"],
+        "notes": "33 trades",
+    },
+
+    # =========================================================================
+    # POLITICAL WHALES (Théo cluster)
+    # =========================================================================
+
     "Fredi9999": {
-        "address": "0x1f2d",  # Partial - full address needed from chain
+        "address": "0x1f2d",  # Partial - needs full address
         "strategy": "Political high-stakes",
         "focus": ["politics"],
         "notes": "Part of Théo cluster, $22M+ lifetime earnings",
     },
+
     "Theo4": {
         "address": "0x5668",  # Partial
         "strategy": "High-frequency political",
         "focus": ["politics"],
         "notes": "$12M in 3 days on Trump election bets",
     },
-    "PrincessCaro": {
-        "address": "0x8119",  # Partial
-        "strategy": "Political",
-        "focus": ["politics"],
-        "notes": "Part of Théo cluster",
-    },
-
-    # Account88888 / JaneStreetIndia - 15-min crypto specialist
-    # $360K+ profit, 23/25 profitable days
-    "Account88888": {
-        "address": "0x",  # Need to extract from Polymarket
-        "strategy": "Sequential entry arbitrage on 15-min crypto",
-        "focus": ["crypto"],
-        "notes": "Suspected Jane Street quant bot, 92% win rate",
-    },
-
-    # Add more whales as discovered
-    # Use PolyTrack, Polymarket Analytics, or on-chain analysis
 }
 
 # Crypto-focused whales only (for the tracker)

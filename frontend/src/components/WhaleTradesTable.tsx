@@ -46,8 +46,8 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
   return (
     <ScrollArea className="h-[400px]">
       <Table>
-        <TableHeader className="sticky top-0 bg-zinc-900">
-          <TableRow className="border-zinc-800">
+        <TableHeader className="sticky top-0 bg-zinc-100 dark:bg-zinc-900">
+          <TableRow className="border-zinc-300 dark:border-zinc-800">
             <TableHead className="text-zinc-400">Time</TableHead>
             <TableHead className="text-zinc-400">Whale</TableHead>
             <TableHead className="text-zinc-400">Market</TableHead>
@@ -77,8 +77,8 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
             return (
               <TableRow
                 key={`${trade.tx_hash}-${idx}`}
-                className={`border-zinc-800 ${
-                  trade.usd_value > 1000 ? "bg-yellow-500/5" : ""
+                className={`border-zinc-300 dark:border-zinc-800 ${
+                  trade.usd_value > 1000 ? "bg-yellow-500/10 dark:bg-yellow-500/5" : ""
                 }`}
               >
                 <TableCell className="font-mono text-xs text-zinc-500">
@@ -93,13 +93,13 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
                         className="w-5 h-5 rounded"
                       />
                     )}
-                    <span className="text-cyan-400 font-medium">
+                    <span className="text-cyan-600 dark:text-cyan-400 font-medium">
                       {trade.whale}
                     </span>
                   </div>
                 </TableCell>
                 <TableCell className="max-w-[200px]">
-                  <span className="text-zinc-300 text-sm truncate block">
+                  <span className="text-zinc-700 dark:text-zinc-300 text-sm truncate block">
                     {formatMarket(trade.market)}
                   </span>
                   <span className="text-xs text-zinc-500">{trade.outcome}</span>

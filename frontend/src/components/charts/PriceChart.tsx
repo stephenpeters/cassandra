@@ -1,15 +1,10 @@
 "use client";
 
 import { useEffect, useRef, memo } from "react";
-import {
-  createChart,
-  IChartApi,
-  ISeriesApi,
-  CandlestickData,
-  Time,
-  ColorType,
-} from "lightweight-charts";
+import { createChart, ColorType, CandlestickSeries, HistogramSeries } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, CandlestickData, HistogramData, Time } from "lightweight-charts";
 import type { CandleData } from "@/types";
+import { useTheme } from "@/components/ThemeProvider";
 
 interface PriceChartProps {
   symbol: string;
@@ -22,6 +17,20 @@ function PriceChartComponent({ symbol, candles, height = 300 }: PriceChartProps)
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const { theme } = useTheme();
+
+  // Theme-aware colors
+  const colors = theme === "dark" ? {
+    text: "#9ca3af",
+    grid: "#1f2937",
+    crosshair: "#6b7280",
+    border: "#374151",
+  } : {
+    text: "#374151",
+    grid: "#e5e7eb",
+    crosshair: "#9ca3af",
+    border: "#d1d5db",
+  };
 
   // Initialize chart
   useEffect(() => {
@@ -30,11 +39,11 @@ function PriceChartComponent({ symbol, candles, height = 300 }: PriceChartProps)
     const chart = createChart(containerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#9ca3af",
+        textColor: colors.text,
       },
       grid: {
-        vertLines: { color: "#1f2937" },
-        horzLines: { color: "#1f2937" },
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
       },
       width: containerRef.current.clientWidth,
       height: height,
@@ -42,45 +51,51 @@ function PriceChartComponent({ symbol, candles, height = 300 }: PriceChartProps)
         mode: 1,
         vertLine: {
           width: 1,
-          color: "#6b7280",
+          color: colors.crosshair,
           style: 2,
         },
         horzLine: {
           width: 1,
-          color: "#6b7280",
+          color: colors.crosshair,
           style: 2,
         },
       },
       timeScale: {
-        borderColor: "#374151",
+        borderColor: colors.border,
         timeVisible: true,
         secondsVisible: false,
       },
       rightPriceScale: {
-        borderColor: "#374151",
+        borderColor: colors.border,
       },
     });
 
-    // Candlestick series
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-    });
+    // Candlestick series - v5 API
+    const candleSeries = chart.addSeries(
+      CandlestickSeries,
+      {
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        borderUpColor: "#22c55e",
+        borderDownColor: "#ef4444",
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+      }
+    );
 
-    // Volume series
-    const volumeSeries = chart.addHistogramSeries({
-      color: "#3b82f6",
-      priceFormat: {
-        type: "volume",
-      },
-      priceScaleId: "",
-    });
+    // Volume series - v5 API
+    const volumeSeries = chart.addSeries(
+      HistogramSeries,
+      {
+        color: "#3b82f6",
+        priceFormat: {
+          type: "volume",
+        },
+        priceScaleId: "volume",
+      }
+    );
 
-    volumeSeries.priceScale().applyOptions({
+    chart.priceScale("volume").applyOptions({
       scaleMargins: {
         top: 0.85,
         bottom: 0,
@@ -106,7 +121,7 @@ function PriceChartComponent({ symbol, candles, height = 300 }: PriceChartProps)
       window.removeEventListener("resize", handleResize);
       chart.remove();
     };
-  }, [height]);
+  }, [height, theme, colors.text, colors.grid, colors.crosshair, colors.border]);
 
   // Update data
   useEffect(() => {
@@ -121,7 +136,7 @@ function PriceChartComponent({ symbol, candles, height = 300 }: PriceChartProps)
       close: c.close,
     }));
 
-    const volumeData = candles.map((c) => ({
+    const volumeData: HistogramData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
       value: c.volume || 0,
       color: c.close >= c.open ? "#22c55e40" : "#ef444440",
@@ -163,7 +178,7 @@ function PriceChartComponent({ symbol, candles, height = 300 }: PriceChartProps)
 
   return (
     <div className="relative">
-      <div className="absolute top-2 left-2 z-10 bg-zinc-900/80 px-2 py-1 rounded text-sm font-mono">
+      <div className="absolute top-2 left-2 z-10 bg-zinc-200/90 dark:bg-zinc-900/80 text-zinc-800 dark:text-zinc-100 px-2 py-1 rounded text-sm font-mono">
         {symbol}
       </div>
       <div ref={containerRef} />

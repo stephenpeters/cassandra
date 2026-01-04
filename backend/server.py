@@ -24,12 +24,14 @@ from data_feeds import (
     BinanceFeed,
     WhaleTracker,
     MomentumCalculator,
+    Polymarket15MinFeed,
     fetch_historical_candles,
     Trade,
     OHLCV,
     OrderBook,
     WhaleTrade,
 )
+from paper_trading import PaperTradingEngine
 
 # ============================================================================
 # FASTAPI APP
@@ -58,6 +60,8 @@ app.add_middleware(
 binance_feed: BinanceFeed = None
 whale_tracker: WhaleTracker = None
 momentum_calc: MomentumCalculator = None
+polymarket_feed: Polymarket15MinFeed = None
+paper_trading: PaperTradingEngine = None
 
 # WebSocket clients
 ws_clients: Set[WebSocket] = set()
@@ -73,7 +77,7 @@ background_tasks: list[asyncio.Task] = []
 @app.on_event("startup")
 async def startup():
     """Initialize data feeds on startup"""
-    global binance_feed, whale_tracker, momentum_calc
+    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading
 
     # Initialize Binance feed with crypto symbols
     symbols = [v["binance"] for v in CryptoExchangeAPI.SYMBOLS.values()]
@@ -109,15 +113,39 @@ async def startup():
         broadcast({"type": "whale_trade", "data": trade.to_dict()})
     )
 
+    # Initialize Polymarket 15-min feed
+    polymarket_feed = Polymarket15MinFeed()
+    polymarket_feed.on_market_update = lambda mkt: asyncio.create_task(
+        broadcast({"type": "market_update", "data": mkt.to_dict()})
+    )
+    polymarket_feed.on_market_trade = lambda trade: asyncio.create_task(
+        broadcast({"type": "market_trade", "data": trade.to_dict()})
+    )
+
     # Initialize momentum calculator
     momentum_calc = MomentumCalculator(binance_feed)
+
+    # Initialize paper trading engine
+    paper_trading = PaperTradingEngine(data_dir=".")
+    paper_trading.on_signal = lambda sig: asyncio.create_task(
+        broadcast({"type": "paper_signal", "data": sig.to_dict()})
+    )
+    paper_trading.on_trade = lambda trade: asyncio.create_task(
+        broadcast({"type": "paper_trade", "data": trade.to_dict()})
+    )
+    paper_trading.on_position_open = lambda pos: asyncio.create_task(
+        broadcast({"type": "paper_position", "data": pos.to_dict()})
+    )
 
     # Start background tasks
     background_tasks.append(asyncio.create_task(binance_feed.connect()))
     background_tasks.append(asyncio.create_task(whale_tracker.start(
         poll_interval=DEFAULT_CONFIG.whale_poll_interval_sec
     )))
+    background_tasks.append(asyncio.create_task(polymarket_feed.start(poll_interval=2.0)))
     background_tasks.append(asyncio.create_task(broadcast_momentum_loop()))
+    background_tasks.append(asyncio.create_task(broadcast_markets_loop()))
+    background_tasks.append(asyncio.create_task(paper_trading_loop()))
 
     print("[Server] Started all data feeds")
 
@@ -129,6 +157,8 @@ async def shutdown():
         await binance_feed.stop()
     if whale_tracker:
         whale_tracker.stop()
+    if polymarket_feed:
+        polymarket_feed.stop()
 
     for task in background_tasks:
         task.cancel()
@@ -169,6 +199,140 @@ async def broadcast_momentum_loop():
             await broadcast({
                 "type": "momentum",
                 "data": signals,
+            })
+
+
+async def broadcast_markets_loop():
+    """Periodically broadcast active 15-min markets and timing"""
+    while True:
+        await asyncio.sleep(2)  # Every 2 seconds
+
+        if polymarket_feed and ws_clients:
+            await broadcast({
+                "type": "markets_15m",
+                "data": {
+                    "active": polymarket_feed.get_active_markets(),
+                    "timing": polymarket_feed.get_next_market_time(),
+                    "trades": polymarket_feed.get_recent_trades(limit=20),
+                },
+            })
+
+
+# Paper trading checkpoint tracking
+_last_checkpoint_times: dict[str, dict[str, int]] = {}  # symbol -> checkpoint -> last_triggered
+
+
+async def paper_trading_loop():
+    """
+    Paper trading signal generation loop.
+
+    Checks for checkpoint times (3m, 7m, 10m, 12.5m) into each 15-min window
+    and triggers signal generation. Uses simulated markets when no real
+    Polymarket markets are available.
+    """
+    global _last_checkpoint_times
+
+    while True:
+        await asyncio.sleep(1)  # Check every second
+
+        if not paper_trading or not paper_trading.config.enabled:
+            continue
+
+        if not polymarket_feed or not momentum_calc:
+            continue
+
+        now = int(datetime.now().timestamp())
+
+        # Get active 15-minute markets from Polymarket
+        active_markets = polymarket_feed.get_active_markets()
+        if not active_markets:
+            continue  # No active markets right now
+
+        for symbol, market_data in active_markets.items():
+            market_start = market_data.get("start_time", 0)
+            market_end = market_data.get("end_time", 0)
+            is_active = market_data.get("is_active", True)
+
+            if not market_start or not market_end or not is_active:
+                continue
+
+            elapsed = now - market_start
+
+            # Get momentum data for signal calculation
+            binance_sym = f"{symbol}USDT".upper()
+            signals = momentum_calc.get_all_signals()
+            momentum = signals.get(binance_sym, {})
+
+            # Get current market price from Polymarket
+            market_price = market_data.get("price", 0.5)
+
+            # Check each checkpoint
+            for checkpoint, checkpoint_sec in paper_trading.CHECKPOINTS.items():
+                # Trigger within 5 seconds of checkpoint
+                if abs(elapsed - checkpoint_sec) <= 5:
+                    # Check if we've already triggered this checkpoint for this market window
+                    if symbol not in _last_checkpoint_times:
+                        _last_checkpoint_times[symbol] = {}
+
+                    last_triggered = _last_checkpoint_times[symbol].get(checkpoint, 0)
+
+                    # Only trigger once per market window
+                    if last_triggered != market_start:
+                        _last_checkpoint_times[symbol][checkpoint] = market_start
+
+                        # Process checkpoint
+                        signal = paper_trading.process_checkpoint(
+                            symbol=symbol,
+                            checkpoint=checkpoint,
+                            momentum=momentum,
+                            market_price=market_price,
+                            market_start=market_start,
+                            market_end=market_end,
+                        )
+
+                        if signal:
+                            print(f"[PaperTrading] {symbol} @ {checkpoint}: {signal.signal.value} (edge: {signal.edge:.1%})")
+
+                            # Broadcast the signal to all clients
+                            await broadcast({
+                                "type": "paper_signal",
+                                "data": signal.to_dict(),
+                            })
+
+        # Check for market resolutions (positions that need settling)
+        for position in list(paper_trading.account.positions):
+            if now >= position.market_end:
+                # Get Binance prices for resolution
+                binance_sym = f"{position.symbol}usdt"
+                candles = binance_feed.candles.get(binance_sym, [])
+
+                if len(candles) >= 2:
+                    # Find open and close prices for the market window
+                    open_price = None
+                    close_price = candles[-1].close
+
+                    for c in candles:
+                        candle_time = c.timestamp // 1000
+                        if candle_time >= position.market_start and open_price is None:
+                            open_price = c.open
+                        if candle_time >= position.market_end:
+                            close_price = c.close
+                            break
+
+                    if open_price and close_price:
+                        paper_trading.resolve_market(
+                            symbol=position.symbol,
+                            market_start=position.market_start,
+                            market_end=position.market_end,
+                            binance_open=open_price,
+                            binance_close=close_price,
+                        )
+
+        # Broadcast paper trading state periodically
+        if ws_clients and paper_trading:
+            await broadcast({
+                "type": "paper_account",
+                "data": paper_trading.get_account_summary(),
             })
 
 
@@ -277,6 +441,124 @@ async def get_orderbook(symbol: str):
     }
 
 
+@app.get("/api/markets-15m")
+async def get_markets_15m():
+    """Get active 15-minute markets and timing"""
+    if not polymarket_feed:
+        return {"active": {}, "timing": {}, "trades": []}
+
+    return {
+        "active": polymarket_feed.get_active_markets(),
+        "timing": polymarket_feed.get_next_market_time(),
+        "trades": polymarket_feed.get_recent_trades(limit=50),
+    }
+
+
+@app.get("/api/markets-15m/{symbol}")
+async def get_market_15m_symbol(symbol: str):
+    """Get 15-minute market for a specific symbol"""
+    if not polymarket_feed:
+        return {"error": "Feed not initialized"}
+
+    market = polymarket_feed.active_markets.get(symbol.upper())
+    if not market:
+        return {"error": f"No active market for {symbol}"}
+
+    return {
+        "market": market.to_dict(),
+        "trades": polymarket_feed.get_recent_trades(symbol=symbol.upper(), limit=50),
+    }
+
+
+@app.get("/api/markets-15m-trades")
+async def get_market_trades(symbol: str = None, limit: int = 50):
+    """Get recent trades on 15-minute markets"""
+    if not polymarket_feed:
+        return {"trades": []}
+
+    return {
+        "trades": polymarket_feed.get_recent_trades(symbol=symbol.upper() if symbol else None, limit=limit),
+    }
+
+
+# ============================================================================
+# PAPER TRADING ENDPOINTS
+# ============================================================================
+
+@app.get("/api/paper-trading/account")
+async def get_paper_account():
+    """Get paper trading account summary"""
+    if not paper_trading:
+        return {"error": "Paper trading not initialized"}
+    return paper_trading.get_account_summary()
+
+
+@app.get("/api/paper-trading/config")
+async def get_paper_config():
+    """Get paper trading configuration"""
+    if not paper_trading:
+        return {"error": "Paper trading not initialized"}
+    return paper_trading.get_config()
+
+
+@app.post("/api/paper-trading/config")
+async def update_paper_config(config: dict):
+    """Update paper trading configuration"""
+    if not paper_trading:
+        return {"error": "Paper trading not initialized"}
+
+    try:
+        paper_trading.update_config(**config)
+        return {"status": "ok", "config": paper_trading.get_config()}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/paper-trading/toggle")
+async def toggle_paper_trading():
+    """Toggle paper trading on/off"""
+    if not paper_trading:
+        return {"error": "Paper trading not initialized"}
+
+    paper_trading.config.enabled = not paper_trading.config.enabled
+    paper_trading._save_state()
+    return {"enabled": paper_trading.config.enabled}
+
+
+@app.post("/api/paper-trading/reset")
+async def reset_paper_account():
+    """Reset paper trading account to initial state"""
+    if not paper_trading:
+        return {"error": "Paper trading not initialized"}
+
+    paper_trading.reset_account()
+    return {"status": "ok", "account": paper_trading.get_account_summary()}
+
+
+@app.get("/api/paper-trading/positions")
+async def get_paper_positions():
+    """Get open paper trading positions"""
+    if not paper_trading:
+        return {"positions": []}
+    return {"positions": paper_trading.get_positions()}
+
+
+@app.get("/api/paper-trading/trades")
+async def get_paper_trades(limit: int = 50):
+    """Get paper trading trade history"""
+    if not paper_trading:
+        return {"trades": []}
+    return {"trades": paper_trading.get_trade_history(limit)}
+
+
+@app.get("/api/paper-trading/signals")
+async def get_paper_signals(limit: int = 20):
+    """Get recent paper trading signals"""
+    if not paper_trading:
+        return {"signals": []}
+    return {"signals": paper_trading.get_recent_signals(limit)}
+
+
 # ============================================================================
 # WEBSOCKET ENDPOINT
 # ============================================================================
@@ -307,6 +589,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if v["address"].startswith("0x") and len(v["address"]) > 10
             ],
             "symbols": list(CryptoExchangeAPI.SYMBOLS.keys()),
+            "paper_trading": paper_trading.get_account_summary() if paper_trading else None,
         })
 
         # Keep connection alive

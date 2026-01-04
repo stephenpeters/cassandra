@@ -52,7 +52,7 @@ function OrderBookChartComponent({ symbol, data }: OrderBookChartProps) {
       </div>
 
       {/* Spread indicator */}
-      <div className="flex justify-center items-center py-1 border-y border-zinc-700">
+      <div className="flex justify-center items-center py-1 border-y border-zinc-300 dark:border-zinc-700">
         <span className="text-xs text-zinc-500">
           Spread: ${data.spread.toFixed(2)} | Mid: $
           {data.mid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -93,7 +93,7 @@ function OrderBookChartComponent({ symbol, data }: OrderBookChartProps) {
             {(data.imbalance * 100).toFixed(1)}%
           </span>
         </div>
-        <div className="h-2 bg-zinc-800 rounded overflow-hidden">
+        <div className="h-2 bg-zinc-200 dark:bg-zinc-800 rounded overflow-hidden">
           <div
             className={`h-full transition-all ${
               data.imbalance > 0 ? "bg-green-500" : "bg-red-500"

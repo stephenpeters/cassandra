@@ -1,0 +1,41 @@
+{
+  "collection_time": "2026-01-04T01:32:11.646485",
+  "symbols": [
+    "SOL",
+    "BTC",
+    "ETH"
+  ],
+  "total_windows": 22,
+  "total_polymarket_trades": 10738,
+  "total_binance_trades": 66186,
+  "date_range": {
+    "start": "2026-01-03T23:30:00",
+    "end": "2026-01-04T01:30:00"
+  },
+  "by_symbol": {
+    "SOL": {
+      "windows": 7,
+      "up_wins": 2,
+      "down_wins": 5,
+      "up_rate": 0.2857142857142857,
+      "total_volume": 57287.261239,
+      "avg_trades_per_window": 462.57142857142856
+    },
+    "BTC": {
+      "windows": 7,
+      "up_wins": 3,
+      "down_wins": 4,
+      "up_rate": 0.42857142857142855,
+      "total_volume": 1405087.68091,
+      "avg_trades_per_window": 500.0
+    },
+    "ETH": {
+      "windows": 8,
+      "up_wins": 5,
+      "down_wins": 3,
+      "up_rate": 0.625,
+      "total_volume": 362315.793604,
+      "avg_trades_per_window": 500.0
+    }
+  }
+}

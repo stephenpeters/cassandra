@@ -1,0 +1,24 @@
+{
+  "config": {
+    "enabled": true,
+    "starting_balance": 10000.0,
+    "slippage_pct": 0.5,
+    "commission_pct": 0.1,
+    "max_position_pct": 2.0,
+    "daily_loss_limit_pct": 10.0
+  },
+  "account": {
+    "balance": 10000.0,
+    "starting_balance": 10000.0,
+    "total_pnl": 0.0,
+    "today_pnl": 0.0,
+    "total_trades": 0,
+    "winning_trades": 0,
+    "losing_trades": 0,
+    "last_reset_date": "2026-01-03",
+    "trading_halted": false,
+    "halt_reason": "",
+    "positions": [],
+    "trade_history": []
+  }
+}

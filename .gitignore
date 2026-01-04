@@ -1,13 +1,15 @@
 # Dependencies
 node_modules/
 venv/
+.venv/
 __pycache__/
 *.pyc
 
-# Environment files
+# Environment files (SENSITIVE!)
 .env
 .env.local
 .env*.local
+*.env
 
 # Build outputs
 .next/
@@ -27,6 +29,7 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
 npm-debug.log*
 
 # Testing
@@ -36,3 +39,13 @@ coverage/
 # Misc
 *.pem
 .vercel
+
+# Trading state (may contain sensitive data)
+*_state.json
+paper_trading_state.json
+live_trading_state.json
+
+# Private keys and credentials
+*.key
+*.secret
+credentials.json

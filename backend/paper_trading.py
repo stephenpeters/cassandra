@@ -34,7 +34,11 @@ class PaperTradingConfig:
     slippage_pct: float = 0.5  # 0.5% slippage
     commission_pct: float = 0.1  # 0.1% commission
     max_position_pct: float = 2.0  # Max 2% of account per position
+    max_position_usd: float = 5000.0  # Hard cap at $5K per position (liquidity constraint)
     daily_loss_limit_pct: float = 10.0  # Stop trading if 10% daily loss
+
+    # Asset selection (hot-reloadable, no restart needed)
+    enabled_assets: list = field(default_factory=lambda: ["BTC"])  # Default to BTC only
 
     # Latency arbitrage settings
     min_edge_pct: float = 5.0  # Minimum edge to trigger (5%)
@@ -48,10 +52,17 @@ class PaperTradingConfig:
     min_orderbook_imbalance: float = 0.1  # 10% imbalance threshold
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        # Ensure enabled_assets is always a list
+        if not isinstance(d.get("enabled_assets"), list):
+            d["enabled_assets"] = ["BTC"]
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "PaperTradingConfig":
+        # Handle enabled_assets which might be missing in old state files
+        if "enabled_assets" not in data:
+            data["enabled_assets"] = ["BTC"]
         return cls(**data)
 
 
@@ -477,6 +488,10 @@ class PaperTradingEngine:
         if self.account.trading_halted:
             return None
 
+        # Check if this asset is enabled
+        if not self.is_asset_enabled(symbol):
+            return None
+
         # Check if we have an existing position for this market window
         has_position = any(
             p.symbol == symbol and p.market_start == market_start
@@ -646,6 +661,10 @@ class PaperTradingEngine:
         if self.account.trading_halted:
             return None
 
+        # Check if this asset is enabled
+        if not self.is_asset_enabled(symbol):
+            return None
+
         now = int(time.time())
         time_remaining = market_end - now
 
@@ -801,14 +820,34 @@ class PaperTradingEngine:
     # -------------------------------------------------------------------------
 
     def _calculate_position_size(self, is_adding: bool = False) -> float:
-        """Calculate position size based on risk management"""
-        max_position = self.account.balance * (self.config.max_position_pct / 100)
+        """
+        Calculate position size based on risk management.
+
+        Uses the LESSER of:
+        1. 2% of account balance
+        2. $5K hard cap (liquidity constraint)
+
+        This prevents slippage issues as account scales.
+        """
+        pct_based = self.account.balance * (self.config.max_position_pct / 100)
+        hard_cap = self.config.max_position_usd
+
+        max_position = min(pct_based, hard_cap)
 
         if is_adding:
             # When adding to position, use 50% of max
             return max_position * 0.5
 
         return max_position
+
+    def is_asset_enabled(self, symbol: str) -> bool:
+        """Check if an asset is enabled for trading"""
+        return symbol.upper() in [a.upper() for a in self.config.enabled_assets]
+
+    def set_enabled_assets(self, assets: list[str]):
+        """Hot-reload enabled assets without restart"""
+        self.config.enabled_assets = [a.upper() for a in assets]
+        self._save_state()
 
     def _apply_slippage_and_commission(self, price: float, size: float, is_buy: bool) -> tuple[float, float]:
         """Apply slippage and commission to trade"""

@@ -15,11 +15,14 @@ numpy>=1.26.0
 # Blockchain (optional, for on-chain monitoring)
 web3>=6.11.0
 
+# Polymarket CLOB SDK (for live trading)
+py-clob-client>=0.17.0
+
 # Utilities
 python-dotenv>=1.0.0
 rich>=13.0.0
 
 # Development
-httpx>=0.25.0  # For testing
+httpx>=0.25.0  # For testing and alerts
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

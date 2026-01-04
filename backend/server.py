@@ -10,10 +10,75 @@ import signal
 from datetime import datetime
 from typing import Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
+from pydantic import BaseModel, Field
+from typing import List, Optional
 import uvicorn
+import secrets
+
+import os
+
+# =============================================================================
+# SECURITY: API Key Authentication
+# =============================================================================
+
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    # Generate a random key if not set (will be logged on startup)
+    API_KEY = secrets.token_urlsafe(32)
+    print(f"[Security] No API_KEY set. Generated temporary key: {API_KEY}")
+    print("[Security] Set API_KEY in .env for persistent authentication")
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    """Verify API key for protected endpoints"""
+    if not api_key or api_key != API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or missing API key. Include X-API-Key header."
+        )
+    return api_key
+
+
+# =============================================================================
+# PYDANTIC MODELS FOR INPUT VALIDATION
+# =============================================================================
+
+class TradingModeRequest(BaseModel):
+    mode: str = Field(..., pattern="^(paper|shadow|live)$")
+
+
+class KillSwitchRequest(BaseModel):
+    activate: bool
+    reason: str = "Manual"
+
+
+class EnabledAssetsRequest(BaseModel):
+    assets: List[str] = Field(..., min_length=1, max_length=5)
+
+
+class ConfigUpdateRequest(BaseModel):
+    max_position_usd: Optional[float] = Field(None, ge=10, le=10000)
+    max_daily_volume_usd: Optional[float] = Field(None, ge=100, le=100000)
+    max_consecutive_losses: Optional[int] = Field(None, ge=1, le=20)
+    daily_loss_limit_usd: Optional[float] = Field(None, ge=50, le=10000)
+    max_slippage_pct: Optional[float] = Field(None, ge=0.1, le=10)
+    require_manual_confirm: Optional[bool] = None
+    min_signal_confidence: Optional[float] = Field(None, ge=0.5, le=1.0)
+
+
+class OrderConfirmRequest(BaseModel):
+    order_id: str
+
+
+class OrderRejectRequest(BaseModel):
+    order_id: str
+    reason: str = "Manual rejection"
 
 from config import (
     CryptoExchangeAPI,
@@ -32,6 +97,12 @@ from data_feeds import (
     WhaleTrade,
 )
 from paper_trading import PaperTradingEngine
+from live_trading import (
+    LiveTradingEngine,
+    LiveTradingConfig,
+    TradingMode,
+    CLOB_AVAILABLE,
+)
 
 # ============================================================================
 # FASTAPI APP
@@ -43,12 +114,13 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS for frontend
+# CORS - Restrict to known origins
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -62,6 +134,7 @@ whale_tracker: WhaleTracker = None
 momentum_calc: MomentumCalculator = None
 polymarket_feed: Polymarket15MinFeed = None
 paper_trading: PaperTradingEngine = None
+live_trading: LiveTradingEngine = None
 
 # WebSocket clients
 ws_clients: Set[WebSocket] = set()
@@ -136,6 +209,31 @@ async def startup():
     paper_trading.on_position_open = lambda pos: asyncio.create_task(
         broadcast({"type": "paper_position", "data": pos.to_dict()})
     )
+
+    # Initialize live trading engine
+    # Private key loaded from environment for security
+    private_key = os.getenv("POLYMARKET_PRIVATE_KEY")
+    live_config = LiveTradingConfig.from_env()
+    live_trading = LiveTradingEngine(
+        private_key=private_key,
+        config=live_config,
+        data_dir=".",
+    )
+
+    # Set up live trading callbacks
+    live_trading.on_order = lambda order: asyncio.create_task(
+        broadcast({"type": "live_order", "data": order.to_dict()})
+    )
+    live_trading.on_fill = lambda order: asyncio.create_task(
+        broadcast({"type": "live_fill", "data": order.to_dict()})
+    )
+    live_trading.on_alert = lambda title, msg: asyncio.create_task(
+        broadcast({"type": "live_alert", "data": {"title": title, "message": msg}})
+    )
+
+    print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
+    if not CLOB_AVAILABLE:
+        print("[Server] WARNING: py-clob-client not installed - live trading disabled")
 
     # Start background tasks
     background_tasks.append(asyncio.create_task(binance_feed.connect()))
@@ -369,8 +467,87 @@ async def paper_trading_loop():
 
 @app.get("/")
 async def root():
-    """Health check"""
+    """Basic status"""
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Production health check endpoint.
+    Returns detailed status for monitoring systems.
+    """
+    status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "uptime_seconds": 0,
+        "components": {
+            "binance_feed": "unknown",
+            "polymarket_feed": "unknown",
+            "paper_trading": "unknown",
+            "websocket_clients": 0,
+        }
+    }
+
+    # Check Binance feed
+    if binance_feed:
+        has_data = any(binance_feed.candles.values())
+        status["components"]["binance_feed"] = "healthy" if has_data else "degraded"
+    else:
+        status["components"]["binance_feed"] = "not_initialized"
+
+    # Check Polymarket feed
+    if polymarket_feed:
+        status["components"]["polymarket_feed"] = "healthy"
+    else:
+        status["components"]["polymarket_feed"] = "not_initialized"
+
+    # Check paper trading
+    if paper_trading:
+        status["components"]["paper_trading"] = "healthy"
+        status["paper_trading"] = {
+            "enabled": paper_trading.config.enabled,
+            "enabled_assets": paper_trading.config.enabled_assets,
+            "balance": paper_trading.account.balance,
+            "open_positions": len(paper_trading.account.positions),
+            "total_trades": paper_trading.account.total_trades,
+            "trading_halted": paper_trading.account.trading_halted,
+        }
+    else:
+        status["components"]["paper_trading"] = "not_initialized"
+
+    # Check live trading
+    if live_trading:
+        mode = live_trading.config.mode.value
+        kill_switch = live_trading.kill_switch_active
+        circuit_breaker = live_trading.circuit_breaker.triggered
+
+        if kill_switch or circuit_breaker:
+            status["components"]["live_trading"] = "halted"
+        else:
+            status["components"]["live_trading"] = "healthy"
+
+        status["live_trading"] = {
+            "mode": mode,
+            "kill_switch_active": kill_switch,
+            "circuit_breaker_triggered": circuit_breaker,
+            "circuit_breaker_reason": live_trading.circuit_breaker.reason,
+            "enabled_assets": live_trading.config.enabled_assets,
+            "open_positions": len(live_trading.open_positions),
+            "clob_connected": live_trading.clob_client is not None,
+        }
+    else:
+        status["components"]["live_trading"] = "not_initialized"
+
+    # WebSocket clients
+    status["components"]["websocket_clients"] = len(ws_clients)
+
+    # Overall status
+    unhealthy = [k for k, v in status["components"].items() if v not in ("healthy", "degraded") and k != "websocket_clients"]
+    if unhealthy:
+        status["status"] = "unhealthy"
+
+    return status
 
 
 @app.get("/api/symbols")
@@ -587,6 +764,233 @@ async def get_paper_signals(limit: int = 20):
 
 
 # ============================================================================
+# LIVE TRADING ENDPOINTS (Protected by API Key)
+# ============================================================================
+
+@app.get("/api/live-trading/status")
+async def get_live_status(_: str = Depends(verify_api_key)):
+    """Get live trading status and mode (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+    return live_trading.get_status()
+
+
+@app.get("/api/live-trading/config")
+async def get_live_config(_: str = Depends(verify_api_key)):
+    """Get live trading configuration (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+    return live_trading.config.to_dict()
+
+
+@app.post("/api/live-trading/config")
+async def update_live_config(
+    request: ConfigUpdateRequest,
+    _: str = Depends(verify_api_key)
+):
+    """Update live trading configuration (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    try:
+        # Only update fields that were provided
+        updates = request.model_dump(exclude_none=True)
+        live_trading.update_config(**updates)
+        return {"status": "ok", "config": live_trading.config.to_dict()}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/live-trading/mode")
+async def set_trading_mode(
+    request: TradingModeRequest,
+    _: str = Depends(verify_api_key)
+):
+    """
+    Set trading mode (requires API key):
+    - paper: Simulated trades only (no real money)
+    - shadow: Live signals, paper execution (validation)
+    - live: Real money trades (CAUTION!)
+    """
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    # Safety checks for live mode
+    if request.mode == "live":
+        if not CLOB_AVAILABLE:
+            return JSONResponse({"error": "py-clob-client not installed - cannot enable live mode"}, status_code=400)
+        if not os.getenv("POLYMARKET_PRIVATE_KEY"):
+            return JSONResponse({"error": "POLYMARKET_PRIVATE_KEY not set - cannot enable live mode"}, status_code=400)
+
+        # Check token allowances are set (per Polymarket best practices)
+        is_approved, message, _ = live_trading.check_token_allowances()
+        if not is_approved:
+            return JSONResponse({
+                "error": f"Token allowances not set: {message}. "
+                         "Call POST /api/live-trading/allowances first."
+            }, status_code=400)
+
+    live_trading.set_mode(request.mode)
+    return {"status": "ok", "mode": request.mode}
+
+
+@app.post("/api/live-trading/kill-switch")
+async def toggle_kill_switch(
+    request: KillSwitchRequest,
+    _: str = Depends(verify_api_key)
+):
+    """Activate or deactivate the kill switch (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    if request.activate:
+        await live_trading.activate_kill_switch(request.reason)
+        return {"status": "ok", "kill_switch": True, "reason": request.reason}
+    else:
+        await live_trading.deactivate_kill_switch()
+        return {"status": "ok", "kill_switch": False}
+
+
+@app.get("/api/live-trading/positions")
+async def get_live_positions(_: str = Depends(verify_api_key)):
+    """Get open live trading positions (requires API key)"""
+    if not live_trading:
+        return {"positions": []}
+    return {"positions": live_trading.get_positions()}
+
+
+@app.get("/api/live-trading/orders")
+async def get_live_orders(limit: int = 50, _: str = Depends(verify_api_key)):
+    """Get live trading order history (requires API key)"""
+    if not live_trading:
+        return {"orders": []}
+    return {"orders": live_trading.get_order_history(limit)}
+
+
+@app.get("/api/live-trading/circuit-breaker")
+async def get_circuit_breaker(_: str = Depends(verify_api_key)):
+    """Get circuit breaker status (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+    return live_trading.circuit_breaker.to_dict()
+
+
+@app.post("/api/live-trading/circuit-breaker/reset")
+async def reset_circuit_breaker(_: str = Depends(verify_api_key)):
+    """Reset circuit breaker (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    live_trading.circuit_breaker.triggered = False
+    live_trading.circuit_breaker.reason = ""
+    live_trading._save_state()
+    return {"status": "ok", "circuit_breaker": live_trading.circuit_breaker.to_dict()}
+
+
+@app.post("/api/live-trading/enabled-assets")
+async def set_enabled_assets(
+    request: EnabledAssetsRequest,
+    _: str = Depends(verify_api_key)
+):
+    """Set which assets are enabled for live trading (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    # Validate assets
+    valid_assets = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
+    invalid = [a for a in request.assets if a.upper() not in valid_assets]
+    if invalid:
+        return JSONResponse({"error": f"Invalid assets: {invalid}"}, status_code=400)
+
+    live_trading.config.enabled_assets = [a.upper() for a in request.assets]
+    live_trading._save_state()
+    return {"status": "ok", "enabled_assets": live_trading.config.enabled_assets}
+
+
+@app.get("/api/live-trading/wallet")
+async def get_wallet_balance(_: str = Depends(verify_api_key)):
+    """Get wallet USDC balance (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+    return live_trading.get_wallet_balance()
+
+
+@app.get("/api/live-trading/allowances")
+async def check_allowances(_: str = Depends(verify_api_key)):
+    """
+    Check if token allowances are set for Polymarket (requires API key).
+
+    Per Polymarket docs: Allowances must be set ONCE per wallet before trading.
+    This checks if they're already set.
+    """
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    is_approved, message, details = live_trading.check_token_allowances()
+    return {
+        "approved": is_approved,
+        "message": message,
+        **details,
+    }
+
+
+@app.post("/api/live-trading/allowances")
+async def set_allowances(_: str = Depends(verify_api_key)):
+    """
+    Set token allowances for Polymarket exchange contracts (requires API key).
+
+    This approves USDC and conditional tokens for the exchange.
+    Only needs to be done ONCE per wallet - costs gas.
+    """
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    success, message = live_trading.set_allowances()
+    if not success:
+        return JSONResponse({"error": message}, status_code=400)
+
+    return {"status": "ok", "message": message}
+
+
+@app.post("/api/live-trading/confirm-order")
+async def confirm_pending_order(
+    request: OrderConfirmRequest,
+    _: str = Depends(verify_api_key)
+):
+    """Confirm a pending order (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    # Find the pending order
+    for order in live_trading.order_history:
+        if order.id == request.order_id and order.status == "pending_confirmation":
+            await live_trading._execute_order(order)
+            return {"status": "ok", "order": order.to_dict()}
+
+    return JSONResponse({"error": f"Order not found or not pending: {request.order_id}"}, status_code=404)
+
+
+@app.post("/api/live-trading/reject-order")
+async def reject_pending_order(
+    request: OrderRejectRequest,
+    _: str = Depends(verify_api_key)
+):
+    """Reject a pending order (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    # Find the pending order
+    for order in live_trading.order_history:
+        if order.id == request.order_id and order.status == "pending_confirmation":
+            order.status = "rejected"
+            order.error = request.reason
+            live_trading._save_state()
+            return {"status": "ok", "order": order.to_dict()}
+
+    return JSONResponse({"error": f"Order not found or not pending: {request.order_id}"}, status_code=404)
+
+
+# ============================================================================
 # WEBSOCKET ENDPOINT
 # ============================================================================
 
@@ -617,6 +1021,7 @@ async def websocket_endpoint(ws: WebSocket):
             ],
             "symbols": list(CryptoExchangeAPI.SYMBOLS.keys()),
             "paper_trading": paper_trading.get_account_summary() if paper_trading else None,
+            "live_trading": live_trading.get_status() if live_trading else None,
         })
 
         # Keep connection alive

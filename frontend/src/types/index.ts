@@ -103,7 +103,9 @@ export interface PaperTradingConfig {
   slippage_pct: number;
   commission_pct: number;
   max_position_pct: number;
+  max_position_usd: number;  // Hard cap at $5K (liquidity constraint)
   daily_loss_limit_pct: number;
+  enabled_assets: string[];  // ["BTC", "ETH"] - hot-reloadable
 }
 
 export interface PaperPosition {
@@ -175,6 +177,86 @@ export interface PaperAccount {
   halt_reason: string;
 }
 
+// Live Trading types
+export type TradingMode = "paper" | "shadow" | "live";
+
+export interface LiveTradingConfig {
+  mode: TradingMode;
+  max_position_usd: number;
+  max_daily_volume_usd: number;
+  max_open_positions: number;
+  max_consecutive_losses: number;
+  daily_loss_limit_usd: number;
+  max_drawdown_pct: number;
+  order_type: "GTC" | "FOK" | "GTD";
+  max_slippage_pct: number;
+  require_manual_confirm: boolean;
+  min_signal_confidence: number;
+  enabled_assets: string[];
+}
+
+export interface CircuitBreaker {
+  triggered: boolean;
+  reason: string;
+  triggered_at: number | null;
+  consecutive_losses: number;
+  daily_loss_usd: number;
+  daily_volume_usd: number;
+  peak_balance_usd: number;
+  current_balance_usd: number;
+  last_reset_date: string;
+}
+
+export interface WalletBalance {
+  usdc_balance: number;
+  allowance: number;
+  collateral_locked: number;
+  total_value: number;
+  available_for_trading: number;
+  error?: string;
+}
+
+export interface LiveOrder {
+  id: string;
+  symbol: string;
+  side: "UP" | "DOWN";
+  direction: "BUY" | "SELL";
+  token_id: string;
+  size_usd: number;
+  price: number;
+  order_type: string;
+  status: "pending" | "pending_confirmation" | "submitted" | "filled" | "partial" | "cancelled" | "failed" | "rejected" | "shadow";
+  created_at: number;
+  filled_at: number | null;
+  filled_size: number;
+  filled_price: number;
+  error: string | null;
+  polymarket_order_id: string | null;
+  tx_hash: string | null;
+}
+
+export interface LivePosition {
+  symbol: string;
+  side: "UP" | "DOWN";
+  token_id: string;
+  size: number;
+  avg_entry_price: number;
+  cost_basis_usd: number;
+  market_start: number;
+  market_end: number;
+  entry_orders: string[];
+}
+
+export interface LiveTradingStatus {
+  mode: TradingMode;
+  kill_switch_active: boolean;
+  circuit_breaker: CircuitBreaker;
+  open_positions: number;
+  enabled_assets: string[];
+  clob_connected: boolean;
+  wallet?: WalletBalance;
+}
+
 export interface WebSocketMessage {
   type:
     | "init"
@@ -191,6 +273,9 @@ export interface WebSocketMessage {
     | "paper_signal"
     | "paper_trade"
     | "paper_position"
+    | "live_order"
+    | "live_fill"
+    | "live_alert"
     | "ping"
     | "pong";
   symbol?: string;
@@ -199,4 +284,5 @@ export interface WebSocketMessage {
   symbols?: string[];
   candles?: CandleData[];
   paper_trading?: PaperAccount;
+  live_trading?: LiveTradingStatus;
 }

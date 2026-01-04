@@ -1,0 +1,58 @@
+[Unit]
+Description=Predmkt Paper Trading Server
+Documentation=https://github.com/yourusername/predmkt
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=predmkt
+Group=predmkt
+WorkingDirectory=/opt/predmkt/backend
+
+# Python environment
+Environment="PATH=/opt/predmkt/backend/venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile=-/opt/predmkt/.env
+
+# Start command
+ExecStart=/opt/predmkt/backend/venv/bin/python -m uvicorn server:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --log-level info \
+    --access-log
+
+# Restart policy - always restart, with backoff
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predmkt
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=80%
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+
+# Read/write paths
+ReadWritePaths=/opt/predmkt/backend
+ReadWritePaths=/var/log/predmkt
+
+# Allow network access
+PrivateNetwork=false
+
+[Install]
+WantedBy=multi-user.target

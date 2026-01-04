@@ -1,0 +1,942 @@
+[
+  {
+    "window_start": 1767484800,
+    "window_end": 1767485700,
+    "resolution": "UP",
+    "binance_open": 90628.01,
+    "binance_close": 91420.44,
+    "binance_change_pct": 0.8744,
+    "volume": 115994.746528,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.1456,
+        "implied_up_prob": 0.67,
+        "predicted_direction": "UP",
+        "edge": 0.1704,
+        "volume_delta": 3560244.17,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.7106,
+        "implied_up_prob": 0.883,
+        "predicted_direction": "UP",
+        "edge": 0.3825,
+        "volume_delta": 26186312.03,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.8528,
+        "implied_up_prob": 0.883,
+        "predicted_direction": "UP",
+        "edge": 0.3825,
+        "volume_delta": 15326378.04,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.798,
+        "implied_up_prob": 0.927,
+        "predicted_direction": "UP",
+        "edge": 0.4275,
+        "volume_delta": 14815689.51,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767485700,
+    "window_end": 1767486600,
+    "resolution": "DOWN",
+    "binance_open": 91399.99,
+    "binance_close": 91098.32,
+    "binance_change_pct": -0.3301,
+    "volume": 148533.963559,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0958,
+        "implied_up_prob": 0.382,
+        "predicted_direction": "DOWN",
+        "edge": -0.1181,
+        "volume_delta": -4490341.53,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.2538,
+        "implied_up_prob": 0.205,
+        "predicted_direction": "DOWN",
+        "edge": -0.2949,
+        "volume_delta": -7702440.82,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.147,
+        "implied_up_prob": 0.291,
+        "predicted_direction": "DOWN",
+        "edge": -0.2087,
+        "volume_delta": -7380672.58,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.2035,
+        "implied_up_prob": 0.194,
+        "predicted_direction": "DOWN",
+        "edge": -0.3057,
+        "volume_delta": -7303437.86,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767486600,
+    "window_end": 1767487500,
+    "resolution": "UP",
+    "binance_open": 91098.32,
+    "binance_close": 91161.3,
+    "binance_change_pct": 0.0691,
+    "volume": 243376.502098,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.0926,
+        "implied_up_prob": 0.615,
+        "predicted_direction": "UP",
+        "edge": 0.1148,
+        "volume_delta": 912182.07,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0926,
+        "implied_up_prob": 0.639,
+        "predicted_direction": "UP",
+        "edge": 0.1394,
+        "volume_delta": 710654.64,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0219,
+        "implied_up_prob": 0.463,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": -0.0372,
+        "volume_delta": -804766.86,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0065,
+        "implied_up_prob": 0.5,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0,
+        "volume_delta": -698647.51,
+        "correct": null
+      }
+    ]
+  },
+  {
+    "window_start": 1767487500,
+    "window_end": 1767488400,
+    "resolution": "UP",
+    "binance_open": 91165.86,
+    "binance_close": 91341.48,
+    "binance_change_pct": 0.1926,
+    "volume": 153302.62604,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.1417,
+        "implied_up_prob": 0.666,
+        "predicted_direction": "UP",
+        "edge": 0.1663,
+        "volume_delta": 1867717.54,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0993,
+        "implied_up_prob": 0.648,
+        "predicted_direction": "UP",
+        "edge": 0.1478,
+        "volume_delta": 1262660.85,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.1311,
+        "implied_up_prob": 0.688,
+        "predicted_direction": "UP",
+        "edge": 0.1884,
+        "volume_delta": 590590.91,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.202,
+        "implied_up_prob": 0.805,
+        "predicted_direction": "UP",
+        "edge": 0.3049,
+        "volume_delta": 2212212.33,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767488400,
+    "window_end": 1767489300,
+    "resolution": "DOWN",
+    "binance_open": 91341.48,
+    "binance_close": 91298.77,
+    "binance_change_pct": -0.0468,
+    "volume": 263290.586194,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0345,
+        "implied_up_prob": 0.452,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": -0.0482,
+        "volume_delta": -592234.25,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0822,
+        "implied_up_prob": 0.626,
+        "predicted_direction": "UP",
+        "edge": 0.1261,
+        "volume_delta": 814701.47,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.098,
+        "implied_up_prob": 0.646,
+        "predicted_direction": "UP",
+        "edge": 0.1462,
+        "volume_delta": 1076440.98,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0345,
+        "implied_up_prob": 0.566,
+        "predicted_direction": "UP",
+        "edge": 0.0656,
+        "volume_delta": 1282086.04,
+        "correct": false
+      }
+    ]
+  },
+  {
+    "window_start": 1767489300,
+    "window_end": 1767490200,
+    "resolution": "DOWN",
+    "binance_open": 91284.31,
+    "binance_close": 91132.0,
+    "binance_change_pct": -0.1669,
+    "volume": 160504.897355,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.1113,
+        "implied_up_prob": 0.366,
+        "predicted_direction": "DOWN",
+        "edge": -0.1344,
+        "volume_delta": -2801023.99,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.184,
+        "implied_up_prob": 0.244,
+        "predicted_direction": "DOWN",
+        "edge": -0.2559,
+        "volume_delta": -3468950.54,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0454,
+        "implied_up_prob": 0.423,
+        "predicted_direction": "DOWN",
+        "edge": -0.0772,
+        "volume_delta": -2319597.6,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.1502,
+        "implied_up_prob": 0.262,
+        "predicted_direction": "DOWN",
+        "edge": -0.2378,
+        "volume_delta": -2666667.5,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767490200,
+    "window_end": 1767491100,
+    "resolution": "DOWN",
+    "binance_open": 91132.01,
+    "binance_close": 91081.52,
+    "binance_change_pct": -0.0554,
+    "volume": 232817.030404,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0005,
+        "implied_up_prob": 0.5,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0,
+        "volume_delta": -370572.91,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.055,
+        "implied_up_prob": 0.409,
+        "predicted_direction": "DOWN",
+        "edge": -0.0914,
+        "volume_delta": -538517.5,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0406,
+        "implied_up_prob": 0.431,
+        "predicted_direction": "DOWN",
+        "edge": -0.069,
+        "volume_delta": -389369.27,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.0455,
+        "implied_up_prob": 0.414,
+        "predicted_direction": "DOWN",
+        "edge": -0.0864,
+        "volume_delta": 1337791.19,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767491100,
+    "window_end": 1767492000,
+    "resolution": "UP",
+    "binance_open": 91081.52,
+    "binance_close": 91235.37,
+    "binance_change_pct": 0.1689,
+    "volume": 197900.989647,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0391,
+        "implied_up_prob": 0.445,
+        "predicted_direction": "DOWN",
+        "edge": -0.0547,
+        "volume_delta": -371313.48,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.0324,
+        "implied_up_prob": 0.445,
+        "predicted_direction": "DOWN",
+        "edge": -0.0551,
+        "volume_delta": -602960.12,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0017,
+        "implied_up_prob": 0.5,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0,
+        "volume_delta": -815365.09,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.1586,
+        "implied_up_prob": 0.75,
+        "predicted_direction": "UP",
+        "edge": 0.2498,
+        "volume_delta": 1229298.8,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767492000,
+    "window_end": 1767492900,
+    "resolution": "DOWN",
+    "binance_open": 91235.37,
+    "binance_close": 91125.87,
+    "binance_change_pct": -0.12,
+    "volume": 166320.270811,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0125,
+        "implied_up_prob": 0.483,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": -0.0174,
+        "volume_delta": -84727.04,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.0826,
+        "implied_up_prob": 0.373,
+        "predicted_direction": "DOWN",
+        "edge": -0.1266,
+        "volume_delta": -253644.34,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.103,
+        "implied_up_prob": 0.347,
+        "predicted_direction": "DOWN",
+        "edge": -0.1526,
+        "volume_delta": -1193405.57,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.1216,
+        "implied_up_prob": 0.303,
+        "predicted_direction": "DOWN",
+        "edge": -0.1971,
+        "volume_delta": -553843.03,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767492900,
+    "window_end": 1767493800,
+    "resolution": "UP",
+    "binance_open": 91125.87,
+    "binance_close": 91207.61,
+    "binance_change_pct": 0.0897,
+    "volume": 147758.435643,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.0165,
+        "implied_up_prob": 0.523,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0232,
+        "volume_delta": 94468.96,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0861,
+        "implied_up_prob": 0.631,
+        "predicted_direction": "UP",
+        "edge": 0.131,
+        "volume_delta": 423922.5,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.0617,
+        "implied_up_prob": 0.6,
+        "predicted_direction": "UP",
+        "edge": 0.0999,
+        "volume_delta": 304592.19,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0695,
+        "implied_up_prob": 0.623,
+        "predicted_direction": "UP",
+        "edge": 0.1228,
+        "volume_delta": 152097.71,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767493800,
+    "window_end": 1767494700,
+    "resolution": "DOWN",
+    "binance_open": 91207.6,
+    "binance_close": 91163.51,
+    "binance_change_pct": -0.0483,
+    "volume": 216087.770428,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0566,
+        "implied_up_prob": 0.423,
+        "predicted_direction": "DOWN",
+        "edge": -0.0769,
+        "volume_delta": -526715.05,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0651,
+        "implied_up_prob": 0.604,
+        "predicted_direction": "UP",
+        "edge": 0.1043,
+        "volume_delta": 732030.46,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.0245,
+        "implied_up_prob": 0.542,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0417,
+        "volume_delta": 597611.18,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0194,
+        "implied_up_prob": 0.537,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0369,
+        "volume_delta": 452488.75,
+        "correct": null
+      }
+    ]
+  },
+  {
+    "window_start": 1767494700,
+    "window_end": 1767495600,
+    "resolution": "DOWN",
+    "binance_open": 91163.51,
+    "binance_close": 91124.0,
+    "binance_change_pct": -0.0433,
+    "volume": 154448.59161,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0709,
+        "implied_up_prob": 0.408,
+        "predicted_direction": "DOWN",
+        "edge": -0.0919,
+        "volume_delta": -372037.25,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.0743,
+        "implied_up_prob": 0.384,
+        "predicted_direction": "DOWN",
+        "edge": -0.116,
+        "volume_delta": -174058.09,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0459,
+        "implied_up_prob": 0.422,
+        "predicted_direction": "DOWN",
+        "edge": -0.078,
+        "volume_delta": -1575260.21,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.0609,
+        "implied_up_prob": 0.389,
+        "predicted_direction": "DOWN",
+        "edge": -0.1106,
+        "volume_delta": -2086131.25,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767495600,
+    "window_end": 1767496500,
+    "resolution": "UP",
+    "binance_open": 91124.0,
+    "binance_close": 91328.67,
+    "binance_change_pct": 0.2246,
+    "volume": 130231.63552,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.0644,
+        "implied_up_prob": 0.585,
+        "predicted_direction": "UP",
+        "edge": 0.0852,
+        "volume_delta": 279078.17,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.1132,
+        "implied_up_prob": 0.666,
+        "predicted_direction": "UP",
+        "edge": 0.1656,
+        "volume_delta": 1356383.66,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.1164,
+        "implied_up_prob": 0.67,
+        "predicted_direction": "UP",
+        "edge": 0.1697,
+        "volume_delta": 1106855.22,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.1569,
+        "implied_up_prob": 0.747,
+        "predicted_direction": "UP",
+        "edge": 0.2474,
+        "volume_delta": -699840.37,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767496500,
+    "window_end": 1767497400,
+    "resolution": "DOWN",
+    "binance_open": 91338.59,
+    "binance_close": 91169.03,
+    "binance_change_pct": -0.1856,
+    "volume": 151651.871589,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.086,
+        "implied_up_prob": 0.392,
+        "predicted_direction": "DOWN",
+        "edge": -0.1078,
+        "volume_delta": -290407.1,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.0228,
+        "implied_up_prob": 0.461,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": -0.0388,
+        "volume_delta": 651760.03,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0895,
+        "implied_up_prob": 0.365,
+        "predicted_direction": "DOWN",
+        "edge": -0.1353,
+        "volume_delta": 263923.53,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.0757,
+        "implied_up_prob": 0.368,
+        "predicted_direction": "DOWN",
+        "edge": -0.1316,
+        "volume_delta": 152050.39,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767497400,
+    "window_end": 1767498300,
+    "resolution": "UP",
+    "binance_open": 91168.07,
+    "binance_close": 91250.21,
+    "binance_change_pct": 0.0901,
+    "volume": 190577.654504,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0448,
+        "implied_up_prob": 0.437,
+        "predicted_direction": "DOWN",
+        "edge": -0.0627,
+        "volume_delta": -699452.71,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.0042,
+        "implied_up_prob": 0.5,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0,
+        "volume_delta": -984005.75,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.035,
+        "implied_up_prob": 0.56,
+        "predicted_direction": "UP",
+        "edge": 0.0595,
+        "volume_delta": -492386.54,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0754,
+        "implied_up_prob": 0.631,
+        "predicted_direction": "UP",
+        "edge": 0.1311,
+        "volume_delta": 78651.23,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767498300,
+    "window_end": 1767499200,
+    "resolution": "DOWN",
+    "binance_open": 91250.21,
+    "binance_close": 91236.78,
+    "binance_change_pct": -0.0147,
+    "volume": 221264.754733,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.0535,
+        "implied_up_prob": 0.574,
+        "predicted_direction": "UP",
+        "edge": 0.0737,
+        "volume_delta": 631507.24,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0436,
+        "implied_up_prob": 0.574,
+        "predicted_direction": "UP",
+        "edge": 0.0741,
+        "volume_delta": 648140.87,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.0326,
+        "implied_up_prob": 0.555,
+        "predicted_direction": "UP",
+        "edge": 0.0555,
+        "volume_delta": 891483.15,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0067,
+        "implied_up_prob": 0.5,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0,
+        "volume_delta": 753898.42,
+        "correct": null
+      }
+    ]
+  },
+  {
+    "window_start": 1767499200,
+    "window_end": 1767500100,
+    "resolution": "UP",
+    "binance_open": 91236.78,
+    "binance_close": 91319.8,
+    "binance_change_pct": 0.091,
+    "volume": 222788.235628,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0044,
+        "implied_up_prob": 0.5,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": 0.0,
+        "volume_delta": 78394.93,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0631,
+        "implied_up_prob": 0.602,
+        "predicted_direction": "UP",
+        "edge": 0.1017,
+        "volume_delta": 354154.8,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0356,
+        "implied_up_prob": 0.44,
+        "predicted_direction": "DOWN",
+        "edge": -0.0605,
+        "volume_delta": 20596.38,
+        "correct": false
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0466,
+        "implied_up_prob": 0.589,
+        "predicted_direction": "UP",
+        "edge": 0.0886,
+        "volume_delta": 211884.62,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767500100,
+    "window_end": 1767501000,
+    "resolution": "UP",
+    "binance_open": 91319.79,
+    "binance_close": 91362.02,
+    "binance_change_pct": 0.0462,
+    "volume": 169135.890398,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.0572,
+        "implied_up_prob": 0.578,
+        "predicted_direction": "UP",
+        "edge": 0.0776,
+        "volume_delta": 83684.09,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.0943,
+        "implied_up_prob": 0.641,
+        "predicted_direction": "UP",
+        "edge": 0.1415,
+        "volume_delta": 3441718.91,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.0891,
+        "implied_up_prob": 0.635,
+        "predicted_direction": "UP",
+        "edge": 0.1349,
+        "volume_delta": 8519072.33,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.0878,
+        "implied_up_prob": 0.649,
+        "predicted_direction": "UP",
+        "edge": 0.1489,
+        "volume_delta": 8228635.95,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767501000,
+    "window_end": 1767501900,
+    "resolution": "UP",
+    "binance_open": 91376.01,
+    "binance_close": 91509.55,
+    "binance_change_pct": 0.1461,
+    "volume": 147058.041978,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": 0.1185,
+        "implied_up_prob": 0.642,
+        "predicted_direction": "UP",
+        "edge": 0.1419,
+        "volume_delta": 947048.22,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": 0.1386,
+        "implied_up_prob": 0.698,
+        "predicted_direction": "UP",
+        "edge": 0.1979,
+        "volume_delta": 3387217.15,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": 0.162,
+        "implied_up_prob": 0.728,
+        "predicted_direction": "UP",
+        "edge": 0.2277,
+        "volume_delta": 6157756.49,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": 0.1257,
+        "implied_up_prob": 0.703,
+        "predicted_direction": "UP",
+        "edge": 0.2029,
+        "volume_delta": 6164764.54,
+        "correct": true
+      }
+    ]
+  },
+  {
+    "window_start": 1767501900,
+    "window_end": 1767502800,
+    "resolution": "DOWN",
+    "binance_open": 91509.55,
+    "binance_close": 91400.01,
+    "binance_change_pct": -0.1197,
+    "volume": 165038.703382,
+    "checkpoints": [
+      {
+        "checkpoint_min": 3,
+        "price_change_pct": -0.0112,
+        "implied_up_prob": 0.484,
+        "predicted_direction": "NO_SIGNAL",
+        "edge": -0.0157,
+        "volume_delta": 474051.49,
+        "correct": null
+      },
+      {
+        "checkpoint_min": 6,
+        "price_change_pct": -0.0314,
+        "implied_up_prob": 0.447,
+        "predicted_direction": "DOWN",
+        "edge": -0.0534,
+        "volume_delta": 1850243.35,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 9,
+        "price_change_pct": -0.0812,
+        "implied_up_prob": 0.375,
+        "predicted_direction": "DOWN",
+        "edge": -0.1248,
+        "volume_delta": 1221967.65,
+        "correct": true
+      },
+      {
+        "checkpoint_min": 12,
+        "price_change_pct": -0.1328,
+        "implied_up_prob": 0.287,
+        "predicted_direction": "DOWN",
+        "edge": -0.213,
+        "volume_delta": 671554.37,
+        "correct": true
+      }
+    ]
+  }
+]

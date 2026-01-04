@@ -294,6 +294,57 @@ function PaperTradingCardComponent({
               Settings
             </div>
 
+            {/* Asset Selection */}
+            <div>
+              <label className="text-xs text-zinc-500 block mb-2">
+                Enabled Assets (no restart needed)
+              </label>
+              <div className="flex gap-4">
+                {[
+                  { symbol: "BTC", viable: true, volume: "$165K" },
+                  { symbol: "ETH", viable: true, volume: "$52K" },
+                ].map(({ symbol, viable, volume }) => {
+                  const enabled = config.enabled_assets?.includes(symbol) ?? symbol === "BTC";
+                  return (
+                    <label
+                      key={symbol}
+                      className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${
+                        enabled
+                          ? "bg-green-500/10 border-green-500/30"
+                          : "bg-zinc-200 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+                      } ${!viable ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        disabled={!viable}
+                        onChange={(e) => {
+                          const current = config.enabled_assets || ["BTC"];
+                          const updated = e.target.checked
+                            ? [...current, symbol]
+                            : current.filter((s) => s !== symbol);
+                          // Ensure at least one asset is enabled
+                          if (updated.length > 0) {
+                            onConfigUpdate({ enabled_assets: updated });
+                          }
+                        }}
+                        className="rounded border-zinc-400"
+                      />
+                      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        {symbol}
+                      </span>
+                      <span className="text-[10px] text-zinc-500">
+                        {volume}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-zinc-500 mt-1">
+                SOL/XRP/DOGE disabled due to low volume (&lt;$20K)
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <label className="text-xs text-zinc-500">Starting Balance</label>
@@ -308,6 +359,19 @@ function PaperTradingCardComponent({
               </div>
 
               <div>
+                <label className="text-xs text-zinc-500">Max Position $</label>
+                <input
+                  type="number"
+                  step="100"
+                  value={config.max_position_usd || 5000}
+                  onChange={(e) =>
+                    onConfigUpdate({ max_position_usd: parseFloat(e.target.value) })
+                  }
+                  className="w-full mt-1 px-2 py-1 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded text-sm font-mono"
+                />
+              </div>
+
+              <div>
                 <label className="text-xs text-zinc-500">Slippage %</label>
                 <input
                   type="number"
@@ -315,19 +379,6 @@ function PaperTradingCardComponent({
                   value={config.slippage_pct}
                   onChange={(e) =>
                     onConfigUpdate({ slippage_pct: parseFloat(e.target.value) })
-                  }
-                  className="w-full mt-1 px-2 py-1 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded text-sm font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-zinc-500">Commission %</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={config.commission_pct}
-                  onChange={(e) =>
-                    onConfigUpdate({ commission_pct: parseFloat(e.target.value) })
                   }
                   className="w-full mt-1 px-2 py-1 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded text-sm font-mono"
                 />

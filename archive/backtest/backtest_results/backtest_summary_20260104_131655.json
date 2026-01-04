@@ -1,0 +1,55 @@
+{
+  "run_time": "2026-01-04T13:16:55.235163",
+  "config": {
+    "min_edge_pct": 5.0,
+    "min_volume_delta_usd": 10000.0,
+    "min_orderbook_imbalance": 0.1,
+    "checkpoints": [
+      3,
+      6,
+      9,
+      12
+    ]
+  },
+  "results": {
+    "total_markets": 500,
+    "markets_analyzed": 500,
+    "overall_accuracy": 86.82,
+    "avg_edge_when_correct": 0.1508,
+    "avg_edge_when_wrong": 0.0989,
+    "by_checkpoint": {
+      "3": {
+        "total_signals": 263,
+        "correct_signals": 201,
+        "incorrect_signals": 62,
+        "no_signal": 237,
+        "accuracy": 76.42585551330798,
+        "avg_edge": 0.10043264884372254
+      },
+      "6": {
+        "total_signals": 319,
+        "correct_signals": 261,
+        "incorrect_signals": 58,
+        "no_signal": 181,
+        "accuracy": 81.81818181818183,
+        "avg_edge": 0.1391592248241768
+      },
+      "9": {
+        "total_signals": 349,
+        "correct_signals": 314,
+        "incorrect_signals": 35,
+        "no_signal": 151,
+        "accuracy": 89.97134670487105,
+        "avg_edge": 0.1508864090971377
+      },
+      "12": {
+        "total_signals": 397,
+        "correct_signals": 377,
+        "incorrect_signals": 20,
+        "no_signal": 103,
+        "accuracy": 94.96221662468514,
+        "avg_edge": 0.17070819411498658
+      }
+    }
+  }
+}

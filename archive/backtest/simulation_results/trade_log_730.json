@@ -1,0 +1,2884 @@
+{
+  "strategy": "7:30 Entry, Hold to Resolution",
+  "config": {
+    "starting_balance": 10000.0,
+    "position_size_pct": 2.0,
+    "slippage_pct": 0.5,
+    "commission_pct": 0.1
+  },
+  "results": {
+    "total_trades": 358,
+    "winning_trades": 300,
+    "losing_trades": 58,
+    "win_rate": 83.79888268156425,
+    "total_pnl": 1093246.4471656284,
+    "final_balance": 1103246.4471656284,
+    "total_return_pct": 10932.464471656285
+  },
+  "trades": [
+    {
+      "time": "2026-01-04 14:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 197.80995024875625,
+      "balance_after": 10197.809950248757
+    },
+    {
+      "time": "2026-01-04 14:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 201.72282789049783,
+      "balance_after": 10399.532778139255
+    },
+    {
+      "time": "2026-01-04 13:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 205.71310614540363,
+      "balance_after": 10605.245884284659
+    },
+    {
+      "time": "2026-01-04 13:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 209.7823160746175,
+      "balance_after": 10815.028200359277
+    },
+    {
+      "time": "2026-01-04 13:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 213.93201902519647,
+      "balance_after": 11028.960219384473
+    },
+    {
+      "time": "2026-01-04 12:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 218.16380722919544,
+      "balance_after": 11247.124026613668
+    },
+    {
+      "time": "2026-01-04 12:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 222.47930441460412,
+      "balance_after": 11469.603331028273
+    },
+    {
+      "time": "2026-01-04 12:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 226.8801664283672,
+      "balance_after": 11696.48349745664
+    },
+    {
+      "time": "2026-01-04 11:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -234.16359961908194,
+      "balance_after": 11462.319897837559
+    },
+    {
+      "time": "2026-01-04 11:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 226.73609287265765,
+      "balance_after": 11689.055990710216
+    },
+    {
+      "time": "2026-01-04 11:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 231.2211583977314,
+      "balance_after": 11920.277149107947
+    },
+    {
+      "time": "2026-01-04 11:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 235.79494298164295,
+      "balance_after": 12156.072092089591
+    },
+    {
+      "time": "2026-01-04 10:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 240.45920157565365,
+      "balance_after": 12396.531293665244
+    },
+    {
+      "time": "2026-01-04 10:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -248.1785564991782,
+      "balance_after": 12148.352737166066
+    },
+    {
+      "time": "2026-01-04 10:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 240.30650505431612,
+      "balance_after": 12388.659242220381
+    },
+    {
+      "time": "2026-01-04 10:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 245.06000683524078,
+      "balance_after": 12633.719249055623
+    },
+    {
+      "time": "2026-01-04 09:45",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -252.92705936609357,
+      "balance_after": 12380.79218968953
+    },
+    {
+      "time": "2026-01-04 09:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 244.9043887082676,
+      "balance_after": 12625.696578397798
+    },
+    {
+      "time": "2026-01-04 09:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 249.74884120287606,
+      "balance_after": 12875.445419600674
+    },
+    {
+      "time": "2026-01-04 09:00",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -257.7664173004055,
+      "balance_after": 12617.679002300269
+    },
+    {
+      "time": "2026-01-04 08:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 249.5902455699793,
+      "balance_after": 12867.269247870248
+    },
+    {
+      "time": "2026-01-04 08:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 254.52738897585652,
+      "balance_after": 13121.796636846106
+    },
+    {
+      "time": "2026-01-04 08:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 259.56219399088246,
+      "balance_after": 13381.358830836989
+    },
+    {
+      "time": "2026-01-04 08:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 264.6965924588621,
+      "balance_after": 13646.055423295851
+    },
+    {
+      "time": "2026-01-04 07:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 269.93255443739224,
+      "balance_after": 13915.987977733243
+    },
+    {
+      "time": "2026-01-04 07:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 275.27208895377026,
+      "balance_after": 14191.260066687013
+    },
+    {
+      "time": "2026-01-04 07:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 280.717244775852,
+      "balance_after": 14471.977311462864
+    },
+    {
+      "time": "2026-01-04 07:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 286.27011119815995,
+      "balance_after": 14758.247422661025
+    },
+    {
+      "time": "2026-01-04 06:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 291.9328188435412,
+      "balance_after": 15050.180241504566
+    },
+    {
+      "time": "2026-01-04 06:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -301.3046084349214,
+      "balance_after": 14748.875633069645
+    },
+    {
+      "time": "2026-01-04 06:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 291.74743552025996,
+      "balance_after": 15040.623068589905
+    },
+    {
+      "time": "2026-01-04 06:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 297.51849009080655,
+      "balance_after": 15338.14155868071
+    },
+    {
+      "time": "2026-01-04 05:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 303.4037018631012,
+      "balance_after": 15641.545260543811
+    },
+    {
+      "time": "2026-01-04 05:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 309.405328980184,
+      "balance_after": 15950.950589523994
+    },
+    {
+      "time": "2026-01-04 05:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 315.5256742534111,
+      "balance_after": 16266.476263777406
+    },
+    {
+      "time": "2026-01-04 04:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 321.7670860460383,
+      "balance_after": 16588.243349823442
+    },
+    {
+      "time": "2026-01-04 04:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 328.13195917428374,
+      "balance_after": 16916.375308997725
+    },
+    {
+      "time": "2026-01-04 04:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 334.62273582621293,
+      "balance_after": 17250.998044823937
+    },
+    {
+      "time": "2026-01-04 04:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 341.2419064988015,
+      "balance_after": 17592.23995132274
+    },
+    {
+      "time": "2026-01-04 03:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 347.9920109535333,
+      "balance_after": 17940.231962276273
+    },
+    {
+      "time": "2026-01-04 03:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 354.87563919090167,
+      "balance_after": 18295.107601467174
+    },
+    {
+      "time": "2026-01-04 02:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 361.89543244418644,
+      "balance_after": 18657.003033911362
+    },
+    {
+      "time": "2026-01-04 02:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 369.0540841928901,
+      "balance_after": 19026.05711810425
+    },
+    {
+      "time": "2026-01-04 02:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 376.3543411962196,
+      "balance_after": 19402.41145930047
+    },
+    {
+      "time": "2026-01-04 01:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 383.7990045470125,
+      "balance_after": 19786.210463847485
+    },
+    {
+      "time": "2026-01-04 01:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 391.3909307465091,
+      "balance_after": 20177.601394593992
+    },
+    {
+      "time": "2026-01-04 01:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 399.13303280038724,
+      "balance_after": 20576.734427394378
+    },
+    {
+      "time": "2026-01-04 00:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -411.94622323643546,
+      "balance_after": 20164.788204157943
+    },
+    {
+      "time": "2026-01-04 00:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 398.879575144119,
+      "balance_after": 20563.66777930206
+    },
+    {
+      "time": "2026-01-04 00:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 406.76981003556926,
+      "balance_after": 20970.43758933763
+    },
+    {
+      "time": "2026-01-03 23:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 414.81612162415246,
+      "balance_after": 21385.253710961784
+    },
+    {
+      "time": "2026-01-03 23:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 423.02159726223806,
+      "balance_after": 21808.275308224023
+    },
+    {
+      "time": "2026-01-03 22:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 431.3893853730974,
+      "balance_after": 22239.664693597122
+    },
+    {
+      "time": "2026-01-03 22:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 439.9226966589468,
+      "balance_after": 22679.58739025607
+    },
+    {
+      "time": "2026-01-03 21:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 448.6248053328873,
+      "balance_after": 23128.21219558896
+    },
+    {
+      "time": "2026-01-03 21:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -463.026808155691,
+      "balance_after": 22665.18538743327
+    },
+    {
+      "time": "2026-01-03 21:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 448.3399193867013,
+      "balance_after": 23113.52530681997
+    },
+    {
+      "time": "2026-01-03 21:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 457.20852910154275,
+      "balance_after": 23570.733835921514
+    },
+    {
+      "time": "2026-01-03 20:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 466.25256874103104,
+      "balance_after": 24036.986404662544
+    },
+    {
+      "time": "2026-01-03 20:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 475.47550848363295,
+      "balance_after": 24512.461913146177
+    },
+    {
+      "time": "2026-01-03 20:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 484.88088715139776,
+      "balance_after": 24997.342800297574
+    },
+    {
+      "time": "2026-01-03 19:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 494.4723135677968,
+      "balance_after": 25491.81511386537
+    },
+    {
+      "time": "2026-01-03 19:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 504.2534679424202,
+      "balance_after": 25996.06858180779
+    },
+    {
+      "time": "2026-01-03 18:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 514.2281032830655,
+      "balance_after": 26510.296685090856
+    },
+    {
+      "time": "2026-01-03 18:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 524.4000468357591,
+      "balance_after": 27034.696731926615
+    },
+    {
+      "time": "2026-01-03 17:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 534.7732015532617,
+      "balance_after": 27569.469933479875
+    },
+    {
+      "time": "2026-01-03 17:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 545.3515475926237,
+      "balance_after": 28114.8214810725
+    },
+    {
+      "time": "2026-01-03 17:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -562.8587260510715,
+      "balance_after": 27551.962755021428
+    },
+    {
+      "time": "2026-01-03 16:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 545.0052381826374,
+      "balance_after": 28096.967993204067
+    },
+    {
+      "time": "2026-01-03 16:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 555.7859840876595,
+      "balance_after": 28652.753977291726
+    },
+    {
+      "time": "2026-01-03 16:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 566.7799838737931,
+      "balance_after": 29219.533961165518
+    },
+    {
+      "time": "2026-01-03 15:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 577.9914559149995,
+      "balance_after": 29797.525417080516
+    },
+    {
+      "time": "2026-01-03 15:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 589.4247020288747,
+      "balance_after": 30386.95011910939
+    },
+    {
+      "time": "2026-01-03 15:00",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -608.3467413845701,
+      "balance_after": 29778.603377724823
+    },
+    {
+      "time": "2026-01-03 14:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 589.0504052625192,
+      "balance_after": 30367.65378298734
+    },
+    {
+      "time": "2026-01-03 14:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 600.7024083984181,
+      "balance_after": 30968.35619138576
+    },
+    {
+      "time": "2026-01-03 14:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 612.5848997503781,
+      "balance_after": 31580.941091136137
+    },
+    {
+      "time": "2026-01-03 13:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 624.7024386046542,
+      "balance_after": 32205.64352974079
+    },
+    {
+      "time": "2026-01-03 13:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 637.0596744347205,
+      "balance_after": 32842.703204175516
+    },
+    {
+      "time": "2026-01-03 12:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 649.6613486852627,
+      "balance_after": 33492.36455286078
+    },
+    {
+      "time": "2026-01-03 11:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 662.5122965914599,
+      "balance_after": 34154.876849452245
+    },
+    {
+      "time": "2026-01-03 11:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 675.6174490342546,
+      "balance_after": 34830.4942984865
+    },
+    {
+      "time": "2026-01-03 10:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 688.9818344323204,
+      "balance_after": 35519.47613291882
+    },
+    {
+      "time": "2026-01-03 10:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 702.6105806714558,
+      "balance_after": 36222.08671359027
+    },
+    {
+      "time": "2026-01-03 10:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 716.5089170721428,
+      "balance_after": 36938.595630662414
+    },
+    {
+      "time": "2026-01-03 09:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 730.6821763960257,
+      "balance_after": 37669.27780705844
+    },
+    {
+      "time": "2026-01-03 09:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 745.1357968920809,
+      "balance_after": 38414.41360395052
+    },
+    {
+      "time": "2026-01-03 08:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 759.8753243832598,
+      "balance_after": 39174.28892833378
+    },
+    {
+      "time": "2026-01-03 08:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 774.9064143944107,
+      "balance_after": 39949.19534272819
+    },
+    {
+      "time": "2026-01-03 08:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -799.7828907614185,
+      "balance_after": 39149.412451966775
+    },
+    {
+      "time": "2026-01-03 08:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 774.4143329391587,
+      "balance_after": 39923.826784905934
+    },
+    {
+      "time": "2026-01-03 07:30",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -799.2750122338168,
+      "balance_after": 39124.551772672115
+    },
+    {
+      "time": "2026-01-03 07:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 773.922563965716,
+      "balance_after": 39898.47433663783
+    },
+    {
+      "time": "2026-01-03 07:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 789.2315223531608,
+      "balance_after": 40687.705858990994
+    },
+    {
+      "time": "2026-01-03 06:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 804.8433071703038,
+      "balance_after": 41492.5491661613
+    },
+    {
+      "time": "2026-01-03 06:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 820.763908625244,
+      "balance_after": 42313.31307478654
+    },
+    {
+      "time": "2026-01-03 06:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 836.9994354183573,
+      "balance_after": 43150.3125102049
+    },
+    {
+      "time": "2026-01-03 06:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 853.5561170861918,
+      "balance_after": 44003.86862729109
+    },
+    {
+      "time": "2026-01-03 05:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 870.4403063917258,
+      "balance_after": 44874.30893368282
+    },
+    {
+      "time": "2026-01-03 05:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 887.658481761912,
+      "balance_after": 45761.967415444735
+    },
+    {
+      "time": "2026-01-03 05:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 905.2172497734327,
+      "balance_after": 46667.18466521817
+    },
+    {
+      "time": "2026-01-03 05:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 923.1233476876329,
+      "balance_after": 47590.3080129058
+    },
+    {
+      "time": "2026-01-03 04:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 941.3836460355884,
+      "balance_after": 48531.69165894139
+    },
+    {
+      "time": "2026-01-03 04:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 960.0051512543175,
+      "balance_after": 49491.6968101957
+    },
+    {
+      "time": "2026-01-03 03:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 978.995008375134,
+      "balance_after": 50470.691818570835
+    },
+    {
+      "time": "2026-01-03 03:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 998.3605037651806,
+      "balance_after": 51469.052322336014
+    },
+    {
+      "time": "2026-01-03 02:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1018.1090679231918,
+      "balance_after": 52487.16139025921
+    },
+    {
+      "time": "2026-01-03 02:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1038.2482783305613,
+      "balance_after": 53525.40966858977
+    },
+    {
+      "time": "2026-01-03 02:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1071.5787015651672,
+      "balance_after": 52453.8309670246
+    },
+    {
+      "time": "2026-01-03 01:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1037.5889693943807,
+      "balance_after": 53491.419936418984
+    },
+    {
+      "time": "2026-01-03 01:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1058.1135116358369,
+      "balance_after": 54549.53344805482
+    },
+    {
+      "time": "2026-01-03 01:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1092.0816596300574,
+      "balance_after": 53457.45178842476
+    },
+    {
+      "time": "2026-01-03 01:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1057.441587869359,
+      "balance_after": 54514.89337629412
+    },
+    {
+      "time": "2026-01-03 00:45",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -1091.3881653934084,
+      "balance_after": 53423.505210900716
+    },
+    {
+      "time": "2026-01-03 00:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1056.770090788244,
+      "balance_after": 54480.27530168896
+    },
+    {
+      "time": "2026-01-03 00:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1077.6740546965636,
+      "balance_after": 55557.94935638553
+    },
+    {
+      "time": "2026-01-03 00:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -1112.2701461148383,
+      "balance_after": 54445.67921027069
+    },
+    {
+      "time": "2026-01-02 23:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1076.989709584339,
+      "balance_after": 55522.66891985503
+    },
+    {
+      "time": "2026-01-02 23:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1098.293637671469,
+      "balance_after": 56620.9625575265
+    },
+    {
+      "time": "2026-01-02 23:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1120.0189786541007,
+      "balance_after": 57740.9815361806
+    },
+    {
+      "time": "2026-01-02 23:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1142.174068498624,
+      "balance_after": 58883.155604679225
+    },
+    {
+      "time": "2026-01-02 22:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1164.767408065137,
+      "balance_after": 60047.92301274436
+    },
+    {
+      "time": "2026-01-02 22:30",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -1202.1594187151422,
+      "balance_after": 58845.76359402922
+    },
+    {
+      "time": "2026-01-02 22:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1164.0277568884992,
+      "balance_after": 60009.791350917716
+    },
+    {
+      "time": "2026-01-02 22:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1187.0533841563276,
+      "balance_after": 61196.844735074046
+    },
+    {
+      "time": "2026-01-02 21:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1225.1608315961823,
+      "balance_after": 59971.68390347786
+    },
+    {
+      "time": "2026-01-02 21:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1186.2995809281094,
+      "balance_after": 61157.98348440597
+    },
+    {
+      "time": "2026-01-02 21:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1209.7657670364601,
+      "balance_after": 62367.74925144243
+    },
+    {
+      "time": "2026-01-02 21:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1233.6961376554732,
+      "balance_after": 63601.445389097906
+    },
+    {
+      "time": "2026-01-02 20:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1258.0998748166446,
+      "balance_after": 64859.54526391455
+    },
+    {
+      "time": "2026-01-02 20:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1282.9863421811892,
+      "balance_after": 66142.53160609574
+    },
+    {
+      "time": "2026-01-02 20:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1308.365088632859,
+      "balance_after": 67450.8966947286
+    },
+    {
+      "time": "2026-01-02 19:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1334.2458519418262,
+      "balance_after": 68785.14254667042
+    },
+    {
+      "time": "2026-01-02 19:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1360.6385625010482,
+      "balance_after": 70145.78110917147
+    },
+    {
+      "time": "2026-01-02 18:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1404.3185378056128,
+      "balance_after": 68741.46257136586
+    },
+    {
+      "time": "2026-01-02 18:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1359.7745291268623,
+      "balance_after": 70101.23710049273
+    },
+    {
+      "time": "2026-01-02 18:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1403.4267667518645,
+      "balance_after": 68697.81033374087
+    },
+    {
+      "time": "2026-01-02 18:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1358.9110444315777,
+      "balance_after": 70056.72137817244
+    },
+    {
+      "time": "2026-01-02 17:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1385.7916570407274,
+      "balance_after": 71442.51303521317
+    },
+    {
+      "time": "2026-01-02 17:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1413.2039949141636,
+      "balance_after": 72855.71703012733
+    },
+    {
+      "time": "2026-01-02 17:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -1458.5714549431493,
+      "balance_after": 71397.14557518419
+    },
+    {
+      "time": "2026-01-02 16:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1412.306581413039,
+      "balance_after": 72809.45215659722
+    },
+    {
+      "time": "2026-01-02 16:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1440.24341087357,
+      "balance_after": 74249.6955674708
+    },
+    {
+      "time": "2026-01-02 15:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1468.7328586186698,
+      "balance_after": 75718.42842608946
+    },
+    {
+      "time": "2026-01-02 15:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1497.7858559878766,
+      "balance_after": 77216.21428207734
+    },
+    {
+      "time": "2026-01-02 15:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1527.4135505535023,
+      "balance_after": 78743.62783263085
+    },
+    {
+      "time": "2026-01-02 14:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1557.6273103979288,
+      "balance_after": 80301.25514302879
+    },
+    {
+      "time": "2026-01-02 14:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1588.438728475521,
+      "balance_after": 81889.6938715043
+    },
+    {
+      "time": "2026-01-02 14:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -1639.4316713075164,
+      "balance_after": 80250.2622001968
+    },
+    {
+      "time": "2026-01-02 13:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1587.4300373270576,
+      "balance_after": 81837.69223752385
+    },
+    {
+      "time": "2026-01-02 13:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1618.8309829977622,
+      "balance_after": 83456.52322052162
+    },
+    {
+      "time": "2026-01-02 13:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1650.853070618555,
+      "balance_after": 85107.37629114017
+    },
+    {
+      "time": "2026-01-02 12:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1703.8496733486263,
+      "balance_after": 83403.52661779155
+    },
+    {
+      "time": "2026-01-02 12:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1669.7386028881867,
+      "balance_after": 81733.78801490336
+    },
+    {
+      "time": "2026-01-02 12:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1616.7756540870423,
+      "balance_after": 83350.5636689904
+    },
+    {
+      "time": "2026-01-02 12:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1648.7570852568786,
+      "balance_after": 84999.32075424728
+    },
+    {
+      "time": "2026-01-02 11:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1701.6864015000308,
+      "balance_after": 83297.63435274725
+    },
+    {
+      "time": "2026-01-02 11:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1647.7100907156025,
+      "balance_after": 84945.34444346285
+    },
+    {
+      "time": "2026-01-02 11:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1680.3034358224852,
+      "balance_after": 86625.64787928533
+    },
+    {
+      "time": "2026-01-02 10:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1713.5415097267708,
+      "balance_after": 88339.1893890121
+    },
+    {
+      "time": "2026-01-02 10:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1747.4370658055939,
+      "balance_after": 90086.6264548177
+    },
+    {
+      "time": "2026-01-02 10:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1782.0031097105777,
+      "balance_after": 91868.62956452828
+    },
+    {
+      "time": "2026-01-02 09:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1817.2529043580757,
+      "balance_after": 93685.88246888635
+    },
+    {
+      "time": "2026-01-02 09:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1853.1999750181237,
+      "balance_after": 95539.08244390448
+    },
+    {
+      "time": "2026-01-02 09:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1889.8581145040569,
+      "balance_after": 97428.94055840853
+    },
+    {
+      "time": "2026-01-02 08:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 1927.2413884647822,
+      "balance_after": 99356.18194687332
+    },
+    {
+      "time": "2026-01-02 08:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -1989.1107625764039,
+      "balance_after": 97367.07118429692
+    },
+    {
+      "time": "2026-01-02 08:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1926.0175506832884,
+      "balance_after": 99293.0887349802
+    },
+    {
+      "time": "2026-01-02 07:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 1964.1160942711776,
+      "balance_after": 101257.20482925138
+    },
+    {
+      "time": "2026-01-02 07:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2002.9682649602337,
+      "balance_after": 103260.17309421161
+    },
+    {
+      "time": "2026-01-02 07:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2042.588970244396,
+      "balance_after": 105302.76206445601
+    },
+    {
+      "time": "2026-01-02 07:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2082.9934125026657,
+      "balance_after": 107385.75547695867
+    },
+    {
+      "time": "2026-01-02 06:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2124.19709483223,
+      "balance_after": 109509.9525717909
+    },
+    {
+      "time": "2026-01-02 06:30",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -2192.389250487254,
+      "balance_after": 107317.56332130365
+    },
+    {
+      "time": "2026-01-02 06:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2122.848186140483,
+      "balance_after": 109440.41150744414
+    },
+    {
+      "time": "2026-01-02 05:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2164.8402355490934,
+      "balance_after": 111605.25174299323
+    },
+    {
+      "time": "2026-01-02 05:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2207.6629294781405,
+      "balance_after": 113812.91467247138
+    },
+    {
+      "time": "2026-01-02 04:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2251.332698902751,
+      "balance_after": 116064.24737137413
+    },
+    {
+      "time": "2026-01-02 04:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2295.8662998190857,
+      "balance_after": 118360.11367119322
+    },
+    {
+      "time": "2026-01-02 04:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2341.2808196735864,
+      "balance_after": 120701.3944908668
+    },
+    {
+      "time": "2026-01-02 03:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2387.5936839193864,
+      "balance_after": 123088.9881747862
+    },
+    {
+      "time": "2026-01-02 03:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2434.82266270242,
+      "balance_after": 125523.81083748862
+    },
+    {
+      "time": "2026-01-02 03:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2482.985877679792,
+      "balance_after": 128006.79671516841
+    },
+    {
+      "time": "2026-01-02 02:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2532.101808973012,
+      "balance_after": 130538.89852414142
+    },
+    {
+      "time": "2026-01-02 02:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -2613.3887484533116,
+      "balance_after": 127925.50977568812
+    },
+    {
+      "time": "2026-01-02 02:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2530.4938724275653,
+      "balance_after": 130456.00364811569
+    },
+    {
+      "time": "2026-01-02 01:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -2611.7291930352762,
+      "balance_after": 127844.2744550804
+    },
+    {
+      "time": "2026-01-02 01:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2528.8869569547796,
+      "balance_after": 130373.16141203519
+    },
+    {
+      "time": "2026-01-02 01:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2578.9108572687746,
+      "balance_after": 132952.07226930396
+    },
+    {
+      "time": "2026-01-02 00:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2629.9242801060063,
+      "balance_after": 135581.99654940996
+    },
+    {
+      "time": "2026-01-02 00:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -2714.3515709191875,
+      "balance_after": 132867.64497849077
+    },
+    {
+      "time": "2026-01-02 00:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -2660.0102524693857,
+      "balance_after": 130207.6347260214
+    },
+    {
+      "time": "2026-01-02 00:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2575.636574716252,
+      "balance_after": 132783.27130073766
+    },
+    {
+      "time": "2026-01-01 23:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2626.5852289866025,
+      "balance_after": 135409.85652972426
+    },
+    {
+      "time": "2026-01-01 22:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2678.541698333598,
+      "balance_after": 138088.39822805786
+    },
+    {
+      "time": "2026-01-01 22:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -2764.5297325257184,
+      "balance_after": 135323.86849553214
+    },
+    {
+      "time": "2026-01-01 21:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2676.8407694570446,
+      "balance_after": 138000.7092649892
+    },
+    {
+      "time": "2026-01-01 21:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2729.791343400059,
+      "balance_after": 140730.50060838924
+    },
+    {
+      "time": "2026-01-01 20:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2783.789332382804,
+      "balance_after": 143514.28994077205
+    },
+    {
+      "time": "2026-01-01 20:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -2873.1560846142565,
+      "balance_after": 140641.1338561578
+    },
+    {
+      "time": "2026-01-01 19:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2782.021569101524,
+      "balance_after": 143423.15542525932
+    },
+    {
+      "time": "2026-01-01 19:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2837.0527239190183,
+      "balance_after": 146260.20814917833
+    },
+    {
+      "time": "2026-01-01 18:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 2893.17244973617,
+      "balance_after": 149153.3805989145
+    },
+    {
+      "time": "2026-01-01 17:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -2986.050679590268,
+      "balance_after": 146167.32991932423
+    },
+    {
+      "time": "2026-01-01 16:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2891.3352259335065,
+      "balance_after": 149058.66514525772
+    },
+    {
+      "time": "2026-01-01 16:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 2948.528713652945,
+      "balance_after": 152007.19385891067
+    },
+    {
+      "time": "2026-01-01 15:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3006.853545468417,
+      "balance_after": 155014.0474043791
+    },
+    {
+      "time": "2026-01-01 14:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3066.332100491857,
+      "balance_after": 158080.37950487094
+    },
+    {
+      "time": "2026-01-01 13:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3126.987200516303,
+      "balance_after": 161207.36670538725
+    },
+    {
+      "time": "2026-01-01 12:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3188.8421187725653,
+      "balance_after": 164396.2088241598
+    },
+    {
+      "time": "2026-01-01 12:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3251.92058885912,
+      "balance_after": 167648.12941301893
+    },
+    {
+      "time": "2026-01-01 12:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3316.246813848633,
+      "balance_after": 170964.37622686758
+    },
+    {
+      "time": "2026-01-01 12:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3381.8454755746325,
+      "balance_after": 174346.2217024422
+    },
+    {
+      "time": "2026-01-01 11:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3448.741744101873,
+      "balance_after": 177794.96344654408
+    },
+    {
+      "time": "2026-01-01 11:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3516.961287384033,
+      "balance_after": 181311.9247339281
+    },
+    {
+      "time": "2026-01-01 10:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3586.5302811124557,
+      "balance_after": 184898.45501504056
+    },
+    {
+      "time": "2026-01-01 10:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3657.4754187597073,
+      "balance_after": 188555.93043380027
+    },
+    {
+      "time": "2026-01-01 09:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3729.823921821798,
+      "balance_after": 192285.75435562208
+    },
+    {
+      "time": "2026-01-01 09:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 3803.6035502630175,
+      "balance_after": 196089.3579058851
+    },
+    {
+      "time": "2026-01-01 09:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3878.842613167369,
+      "balance_after": 199968.20051905245
+    },
+    {
+      "time": "2026-01-01 08:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 3955.569979600708,
+      "balance_after": 203923.77049865315
+    },
+    {
+      "time": "2026-01-01 08:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4033.8150896877364,
+      "balance_after": 207957.58558834088
+    },
+    {
+      "time": "2026-01-01 08:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 4113.607965908117,
+      "balance_after": 212071.193554249
+    },
+    {
+      "time": "2026-01-01 07:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4194.979224616035,
+      "balance_after": 216266.17277886503
+    },
+    {
+      "time": "2026-01-01 07:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4277.960087787621,
+      "balance_after": 220544.13286665265
+    },
+    {
+      "time": "2026-01-01 06:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4362.582395000766,
+      "balance_after": 224906.71526165341
+    },
+    {
+      "time": "2026-01-01 05:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 4448.878615651885,
+      "balance_after": 229355.5938773053
+    },
+    {
+      "time": "2026-01-01 05:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 4536.881861414371,
+      "balance_after": 233892.4757387197
+    },
+    {
+      "time": "2026-01-01 04:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4626.625898943458,
+      "balance_after": 238519.10163766315
+    },
+    {
+      "time": "2026-01-01 04:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4718.145162832419,
+      "balance_after": 243237.24680049557
+    },
+    {
+      "time": "2026-01-01 04:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4811.474768825048,
+      "balance_after": 248048.72156932062
+    },
+    {
+      "time": "2026-01-01 03:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -4965.9354058178,
+      "balance_after": 243082.78616350284
+    },
+    {
+      "time": "2026-01-01 03:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4808.419383733155,
+      "balance_after": 247891.205547236
+    },
+    {
+      "time": "2026-01-01 03:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 4903.534703640297,
+      "balance_after": 252794.7402508763
+    },
+    {
+      "time": "2026-01-01 03:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 5000.531499217311,
+      "balance_after": 257795.2717500936
+    },
+    {
+      "time": "2026-01-01 02:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5099.446987925063,
+      "balance_after": 262894.71873801865
+    },
+    {
+      "time": "2026-01-01 02:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5200.319123422824,
+      "balance_after": 268095.0378614415
+    },
+    {
+      "time": "2026-01-01 02:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 5303.186610131017,
+      "balance_after": 273398.2244715725
+    },
+    {
+      "time": "2026-01-01 01:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 5408.088918082005,
+      "balance_after": 278806.3133896545
+    },
+    {
+      "time": "2026-01-01 01:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5515.06629806467,
+      "balance_after": 284321.37968771916
+    },
+    {
+      "time": "2026-01-01 00:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 5624.159797068547,
+      "balance_after": 289945.53948478773
+    },
+    {
+      "time": "2026-01-01 00:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5735.411274033467,
+      "balance_after": 295680.9507588212
+    },
+    {
+      "time": "2026-01-01 00:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -5919.532634191601,
+      "balance_after": 289761.4181246296
+    },
+    {
+      "time": "2026-01-01 00:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5731.769170324204,
+      "balance_after": 295493.1872949538
+    },
+    {
+      "time": "2025-12-31 23:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -5915.773609644975,
+      "balance_after": 289577.4136853088
+    },
+    {
+      "time": "2025-12-31 23:30",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -5797.339821979883,
+      "balance_after": 283780.07386332896
+    },
+    {
+      "time": "2025-12-31 23:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5613.4522292493475,
+      "balance_after": 289393.5260925783
+    },
+    {
+      "time": "2025-12-31 23:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5724.491899868506,
+      "balance_after": 295118.01799244684
+    },
+    {
+      "time": "2025-12-31 22:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5837.728045659747,
+      "balance_after": 300955.74603810656
+    },
+    {
+      "time": "2025-12-31 22:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 5953.2041150875175,
+      "balance_after": 306908.9501531941
+    },
+    {
+      "time": "2025-12-31 22:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6070.964416070134,
+      "balance_after": 312979.9145692642
+    },
+    {
+      "time": "2025-12-31 22:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -6265.85788967667,
+      "balance_after": 306714.0566795876
+    },
+    {
+      "time": "2025-12-31 21:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 6067.109229238342,
+      "balance_after": 312781.16590882593
+    },
+    {
+      "time": "2025-12-31 21:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6187.122686717284,
+      "balance_after": 318968.28859554324
+    },
+    {
+      "time": "2025-12-31 21:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 6309.510129801534,
+      "balance_after": 325277.79872534476
+    },
+    {
+      "time": "2025-12-31 21:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 6434.31851828854,
+      "balance_after": 331712.1172436333
+    },
+    {
+      "time": "2025-12-31 20:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6561.595740887271,
+      "balance_after": 338273.7129845206
+    },
+    {
+      "time": "2025-12-31 20:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6691.390633593008,
+      "balance_after": 344965.1036181136
+    },
+    {
+      "time": "2025-12-31 19:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6823.75299842561,
+      "balance_after": 351788.85661653924
+    },
+    {
+      "time": "2025-12-31 19:30",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -7042.812909463116,
+      "balance_after": 344746.0437070761
+    },
+    {
+      "time": "2025-12-31 19:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -6901.815795015664,
+      "balance_after": 337844.22791206045
+    },
+    {
+      "time": "2025-12-31 19:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 6682.894991511416,
+      "balance_after": 344527.1229035719
+    },
+    {
+      "time": "2025-12-31 18:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6815.089304090269,
+      "balance_after": 351342.2122076621
+    },
+    {
+      "time": "2025-12-31 18:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 6949.898551708561,
+      "balance_after": 358292.11075937067
+    },
+    {
+      "time": "2025-12-31 18:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7087.374460383298,
+      "balance_after": 365379.485219754
+    },
+    {
+      "time": "2025-12-31 17:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7227.56977932357,
+      "balance_after": 372607.0549990776
+    },
+    {
+      "time": "2025-12-31 17:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7370.5383011703125,
+      "balance_after": 379977.5933002479
+    },
+    {
+      "time": "2025-12-31 17:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7516.334882636419,
+      "balance_after": 387493.92818288435
+    },
+    {
+      "time": "2025-12-31 16:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 7665.015465555149,
+      "balance_after": 395158.9436484395
+    },
+    {
+      "time": "2025-12-31 16:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7816.637098344889,
+      "balance_after": 402975.5807467844
+    },
+    {
+      "time": "2025-12-31 15:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7971.257957898509,
+      "balance_after": 410946.8387046829
+    },
+    {
+      "time": "2025-12-31 15:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -8227.155710867752,
+      "balance_after": 402719.68299381516
+    },
+    {
+      "time": "2025-12-31 14:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 7966.196045720148,
+      "balance_after": 410685.8790395353
+    },
+    {
+      "time": "2025-12-31 13:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 8123.775330067721,
+      "balance_after": 418809.654369603
+    },
+    {
+      "time": "2025-12-31 13:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 8284.471689455,
+      "balance_after": 427094.126059058
+    },
+    {
+      "time": "2025-12-31 11:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 8448.34678272783,
+      "balance_after": 435542.4728417858
+    },
+    {
+      "time": "2025-12-31 11:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 8615.46348840539,
+      "balance_after": 444157.9363301912
+    },
+    {
+      "time": "2025-12-31 11:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 8785.885928806538,
+      "balance_after": 452943.82225899777
+    },
+    {
+      "time": "2025-12-31 10:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -9067.935321625137,
+      "balance_after": 443875.8869373726
+    },
+    {
+      "time": "2025-12-31 10:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -8886.3952564862,
+      "balance_after": 434989.4916808864
+    },
+    {
+      "time": "2025-12-31 09:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 8604.52497081279,
+      "balance_after": 443594.0166516992
+    },
+    {
+      "time": "2025-12-31 09:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 8774.731036451858,
+      "balance_after": 452368.7476881511
+    },
+    {
+      "time": "2025-12-31 09:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 8948.303947428532,
+      "balance_after": 461317.0516355796
+    },
+    {
+      "time": "2025-12-31 08:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 9125.31030329369,
+      "balance_after": 470442.3619388733
+    },
+    {
+      "time": "2025-12-31 08:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -9418.256086016243,
+      "balance_after": 461024.10585285706
+    },
+    {
+      "time": "2025-12-31 08:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 9119.5155442231,
+      "balance_after": 470143.62139708013
+    },
+    {
+      "time": "2025-12-31 07:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 9299.908635832655,
+      "balance_after": 479443.5300329128
+    },
+    {
+      "time": "2025-12-31 07:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 9483.870082289855,
+      "balance_after": 488927.40011520265
+    },
+    {
+      "time": "2025-12-31 06:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 9671.470469204198,
+      "balance_after": 498598.87058440683
+    },
+    {
+      "time": "2025-12-31 06:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 9862.781778438759,
+      "balance_after": 508461.6523628456
+    },
+    {
+      "time": "2025-12-31 06:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 10057.877415729488,
+      "balance_after": 518519.5297785751
+    },
+    {
+      "time": "2025-12-31 05:45",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -10380.760986167073,
+      "balance_after": 508138.76879240805
+    },
+    {
+      "time": "2025-12-31 05:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 10051.49045742905,
+      "balance_after": 518190.2592498371
+    },
+    {
+      "time": "2025-12-31 05:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 10250.318940160038,
+      "balance_after": 528440.5781899971
+    },
+    {
+      "time": "2025-12-31 05:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 10453.080448118732,
+      "balance_after": 538893.6586381159
+    },
+    {
+      "time": "2025-12-31 04:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 10659.852780457595,
+      "balance_after": 549553.5114185734
+    },
+    {
+      "time": "2025-12-31 04:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -11002.061298599841,
+      "balance_after": 538551.4501199736
+    },
+    {
+      "time": "2025-12-31 04:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -10781.800031401872,
+      "balance_after": 527769.6500885717
+    },
+    {
+      "time": "2025-12-31 04:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 10439.808822682387,
+      "balance_after": 538209.4589112541
+    },
+    {
+      "time": "2025-12-31 03:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 10646.31862906452,
+      "balance_after": 548855.7775403186
+    },
+    {
+      "time": "2025-12-31 03:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 10856.913404899286,
+      "balance_after": 559712.6909452179
+    },
+    {
+      "time": "2025-12-31 03:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 11071.673954947102,
+      "balance_after": 570784.364900165
+    },
+    {
+      "time": "2025-12-31 03:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 11290.682682366956,
+      "balance_after": 582075.0475825319
+    },
+    {
+      "time": "2025-12-31 02:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 11514.023620334305,
+      "balance_after": 593589.0712028663
+    },
+    {
+      "time": "2025-12-31 02:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -11883.653205481383,
+      "balance_after": 581705.4179973849
+    },
+    {
+      "time": "2025-12-31 02:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 11506.711979349468,
+      "balance_after": 593212.1299767344
+    },
+    {
+      "time": "2025-12-31 02:00",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -11876.106842134222,
+      "balance_after": 581336.0231346001
+    },
+    {
+      "time": "2025-12-31 01:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 11499.404981406507,
+      "balance_after": 592835.4281160067
+    },
+    {
+      "time": "2025-12-31 01:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 11726.874654132738,
+      "balance_after": 604562.3027701394
+    },
+    {
+      "time": "2025-12-31 01:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 11958.843903323479,
+      "balance_after": 616521.1466734629
+    },
+    {
+      "time": "2025-12-31 00:45",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -12342.753356402729,
+      "balance_after": 604178.3933170602
+    },
+    {
+      "time": "2025-12-31 00:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 11951.249792342116,
+      "balance_after": 616129.6431094023
+    },
+    {
+      "time": "2025-12-31 00:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 12187.65740502548,
+      "balance_after": 628317.3005144277
+    },
+    {
+      "time": "2025-12-31 00:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 12428.74139551918,
+      "balance_after": 640746.041909947
+    },
+    {
+      "time": "2025-12-30 23:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 12674.59426722941,
+      "balance_after": 653420.6361771764
+    },
+    {
+      "time": "2025-12-30 23:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 12925.310353371793,
+      "balance_after": 666345.9465305482
+    },
+    {
+      "time": "2025-12-30 23:15",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -13340.245849541574,
+      "balance_after": 653005.7006810065
+    },
+    {
+      "time": "2025-12-30 23:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 12917.102516386412,
+      "balance_after": 665922.803197393
+    },
+    {
+      "time": "2025-12-30 22:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 13172.615656998862,
+      "balance_after": 679095.4188543918
+    },
+    {
+      "time": "2025-12-30 22:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -13595.490285464923,
+      "balance_after": 665499.9285689269
+    },
+    {
+      "time": "2025-12-30 22:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 13164.250776077026,
+      "balance_after": 678664.1793450039
+    },
+    {
+      "time": "2025-12-30 22:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 13424.652755184823,
+      "balance_after": 692088.8321001887
+    },
+    {
+      "time": "2025-12-30 21:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 13690.205744545816,
+      "balance_after": 705779.0378447345
+    },
+    {
+      "time": "2025-12-30 21:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 13961.011636268202,
+      "balance_after": 719740.0494810027
+    },
+    {
+      "time": "2025-12-30 20:15",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -14409.195790609674,
+      "balance_after": 705330.853690393
+    },
+    {
+      "time": "2025-12-30 20:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 13952.146107740944,
+      "balance_after": 719282.999798134
+    },
+    {
+      "time": "2025-12-30 19:45",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -14400.045655958644,
+      "balance_after": 704882.9541421754
+    },
+    {
+      "time": "2025-12-30 19:30",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -14111.75674192635,
+      "balance_after": 690771.1974002491
+    },
+    {
+      "time": "2025-12-30 19:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 13664.141619101705,
+      "balance_after": 704435.3390193508
+    },
+    {
+      "time": "2025-12-30 19:00",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -14102.795487167403,
+      "balance_after": 690332.5435321834
+    },
+    {
+      "time": "2025-12-30 18:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 13655.46460911986,
+      "balance_after": 703988.0081413032
+    },
+    {
+      "time": "2025-12-30 18:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 13925.58328661522,
+      "balance_after": 717913.5914279184
+    },
+    {
+      "time": "2025-12-30 17:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 14201.045180326248,
+      "balance_after": 732114.6366082446
+    },
+    {
+      "time": "2025-12-30 17:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 14481.955984386314,
+      "balance_after": 746596.5925926309
+    },
+    {
+      "time": "2025-12-30 17:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 14768.423483663926,
+      "balance_after": 761365.0160762948
+    },
+    {
+      "time": "2025-12-30 16:45",
+      "side": "UP",
+      "resolution": "DOWN",
+      "correct": false,
+      "pnl": -15242.527621847421,
+      "balance_after": 746122.4884544474
+    },
+    {
+      "time": "2025-12-30 16:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 14759.045232065248,
+      "balance_after": 760881.5336865126
+    },
+    {
+      "time": "2025-12-30 16:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 15050.993832372644,
+      "balance_after": 775932.5275188852
+    },
+    {
+      "time": "2025-12-30 15:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 15348.717466490238,
+      "balance_after": 791281.2449853754
+    },
+    {
+      "time": "2025-12-30 15:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 15652.330370333102,
+      "balance_after": 806933.5753557085
+    },
+    {
+      "time": "2025-12-30 15:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 15961.949039516368,
+      "balance_after": 822895.5243952249
+    },
+    {
+      "time": "2025-12-30 14:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 16277.692274054363,
+      "balance_after": 839173.2166692793
+    },
+    {
+      "time": "2025-12-30 14:30",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 16599.681223943888,
+      "balance_after": 855772.8978932232
+    },
+    {
+      "time": "2025-12-30 14:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 16928.039435649243,
+      "balance_after": 872700.9373288725
+    },
+    {
+      "time": "2025-12-30 14:00",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 17262.89289950672,
+      "balance_after": 889963.8302283792
+    },
+    {
+      "time": "2025-12-30 13:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 17604.37009806683,
+      "balance_after": 907568.2003264461
+    },
+    {
+      "time": "2025-12-30 13:15",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 17952.602055392756,
+      "balance_after": 925520.8023818389
+    },
+    {
+      "time": "2025-12-30 12:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 18307.722387334055,
+      "balance_after": 943828.524769173
+    },
+    {
+      "time": "2025-12-30 12:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 18669.867352794714,
+      "balance_after": 962498.3921219677
+    },
+    {
+      "time": "2025-12-30 11:45",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 19039.175906015433,
+      "balance_after": 981537.5680279832
+    },
+    {
+      "time": "2025-12-30 11:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 19415.789749890057,
+      "balance_after": 1000953.3577778733
+    },
+    {
+      "time": "2025-12-30 11:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 19799.853390336666,
+      "balance_after": 1020753.2111682099
+    },
+    {
+      "time": "2025-12-30 11:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 20191.51419174418,
+      "balance_after": 1040944.725359954
+    },
+    {
+      "time": "2025-12-30 10:45",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 20590.922433515774,
+      "balance_after": 1061535.6477934697
+    },
+    {
+      "time": "2025-12-30 10:30",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 20998.23136773075,
+      "balance_after": 1082533.8791612005
+    },
+    {
+      "time": "2025-12-30 10:15",
+      "side": "UP",
+      "resolution": "UP",
+      "correct": true,
+      "pnl": 21413.597277947018,
+      "balance_after": 1103947.4764391475
+    },
+    {
+      "time": "2025-12-30 10:00",
+      "side": "DOWN",
+      "resolution": "DOWN",
+      "correct": true,
+      "pnl": 21837.179539166777,
+      "balance_after": 1125784.6559783143
+    },
+    {
+      "time": "2025-12-30 09:30",
+      "side": "DOWN",
+      "resolution": "UP",
+      "correct": false,
+      "pnl": -22538.208812685854,
+      "balance_after": 1103246.4471656284
+    }
+  ]
+}

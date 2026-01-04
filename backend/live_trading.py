@@ -731,9 +731,15 @@ class LiveTradingEngine:
             f"Result: {result} | P&L: ${pnl:+.2f}"
         )
 
+        # Get current balance for alert
+        balance = self.circuit_breaker.current_balance_usd
+        if self.config.mode == TradingMode.LIVE and self.clob_client:
+            wallet = self.get_wallet_balance()
+            balance = wallet.get("total_value", balance)
+
         await self._send_alert(
             f"TRADE {result}",
-            f"{position.symbol} {position.side}: ${pnl:+.2f}"
+            f"{position.symbol} {position.side}: ${pnl:+.2f}\nBalance: ${balance:,.2f}"
         )
 
         # Record to ledger

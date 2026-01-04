@@ -238,6 +238,11 @@ async def startup():
         broadcast({"type": "live_alert", "data": {"title": title, "message": msg}})
     )
 
+    # Wire up paper trading alerts to use live trading's alert system
+    paper_trading.on_alert = lambda title, msg: asyncio.create_task(
+        live_trading._send_alert(title, msg)
+    )
+
     print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
     if not CLOB_AVAILABLE:
         print("[Server] WARNING: py-clob-client not installed - live trading disabled")

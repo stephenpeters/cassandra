@@ -359,6 +359,7 @@ class PaperTradingEngine:
         self.on_trade: Optional[Callable[[PaperTrade], None]] = None
         self.on_position_open: Optional[Callable[[PaperPosition], None]] = None
         self.on_latency_gap: Optional[Callable[[LatencyGap], None]] = None
+        self.on_alert: Optional[Callable[[str, str], None]] = None  # (title, message)
 
         # Load persisted state
         self._load_state()
@@ -1055,9 +1056,17 @@ class PaperTradingEngine:
                     except Exception as e:
                         print(f"[PaperTrading] Failed to record trade to ledger: {e}")
 
-                # Fire callback
+                # Fire trade callback
                 if self.on_trade:
                     self.on_trade(trade)
+
+                # Send alert with balance
+                if self.on_alert:
+                    result = "WIN" if is_correct else "LOSS"
+                    self.on_alert(
+                        f"PAPER {result}",
+                        f"{symbol} {position.side}: ${pnl:+.2f}\nBalance: ${self.account.balance:,.2f}"
+                    )
 
         # Remove settled positions
         for p in positions_to_remove:

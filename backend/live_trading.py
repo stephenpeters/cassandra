@@ -20,8 +20,11 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, Callable
+from typing import Optional, Callable, TYPE_CHECKING
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from trade_ledger import TradeLedger
 
 # Polymarket SDK
 try:
@@ -97,9 +100,8 @@ logger = setup_logging()
 
 class TradingMode(Enum):
     """Trading mode selection"""
-    PAPER = "paper"  # Simulated trades only
-    LIVE = "live"    # Real money trades
-    SHADOW = "shadow"  # Live signals, paper execution (for validation)
+    PAPER = "paper"  # Real signals, simulated execution (no real money)
+    LIVE = "live"    # Real money trades via Polymarket CLOB
 
 
 @dataclass
@@ -310,13 +312,17 @@ class LiveTradingEngine:
         private_key: Optional[str] = None,
         config: Optional[LiveTradingConfig] = None,
         data_dir: str = ".",
+        ledger: Optional["TradeLedger"] = None,
     ):
         self.config = config or LiveTradingConfig()
         self.data_dir = data_dir
         self.private_key = private_key
 
-        # Initialize paper trading engine for signals
-        self.paper_engine = PaperTradingEngine(data_dir=data_dir)
+        # Trade ledger for persistent storage
+        self.ledger = ledger
+
+        # Initialize paper trading engine for signals (share ledger)
+        self.paper_engine = PaperTradingEngine(data_dir=data_dir, ledger=ledger)
 
         # Polymarket client (only if live mode and key provided)
         self.clob_client: Optional[ClobClient] = None
@@ -507,16 +513,13 @@ class LiveTradingEngine:
 
         # Execute based on mode
         if self.config.mode == TradingMode.PAPER:
-            order.status = "filled"
+            # Paper mode: real signals, simulated execution
+            # Exercises full code path except post_order()
+            order.status = "paper"
             order.filled_at = int(time.time())
             order.filled_size = size_usd / price
             order.filled_price = price
-            logger.info(f"PAPER ORDER FILLED: {order.id}")
-
-        elif self.config.mode == TradingMode.SHADOW:
-            # Log as if live, but don't execute
-            order.status = "shadow"
-            logger.info(f"SHADOW ORDER: {order.id} (would execute in live mode)")
+            logger.info(f"PAPER ORDER: {order.id} (would execute in live mode)")
 
         elif self.config.mode == TradingMode.LIVE:
             # Check balance before executing
@@ -536,8 +539,8 @@ class LiveTradingEngine:
         # Track order
         self.order_history.append(order)
 
-        # Create position if filled
-        if order.status == "filled":
+        # Create position if filled (or paper-filled)
+        if order.status in ("filled", "paper"):
             self._create_position(order, signal)
 
         # Fire callback
@@ -691,6 +694,8 @@ class LiveTradingEngine:
         symbol: str,
         market_start: int,
         resolution: str,  # "UP" or "DOWN"
+        binance_open: float = 0.0,
+        binance_close: float = 0.0,
     ) -> Optional[float]:
         """
         Resolve a position when market closes.
@@ -730,6 +735,21 @@ class LiveTradingEngine:
             f"TRADE {result}",
             f"{position.symbol} {position.side}: ${pnl:+.2f}"
         )
+
+        # Record to ledger
+        if self.ledger:
+            try:
+                from trade_ledger import create_trade_record_from_live
+                trade_record = create_trade_record_from_live(
+                    position=position,
+                    resolution=resolution,
+                    binance_open=binance_open,
+                    binance_close=binance_close,
+                    pnl=pnl,
+                )
+                self.ledger.record_trade(trade_record)
+            except Exception as e:
+                logger.error(f"Failed to record trade to ledger: {e}")
 
         # Remove position
         self.open_positions.remove(position)

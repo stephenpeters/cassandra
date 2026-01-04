@@ -63,7 +63,6 @@ export function LiveTradingCard({
 
   const modeColors: Record<TradingMode, string> = {
     paper: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-    shadow: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
     live: "bg-green-500/20 text-green-400 border-green-500/30",
   };
 
@@ -153,7 +152,7 @@ export function LiveTradingCard({
           Trading Mode
         </label>
         <div className="flex gap-2">
-          {(["paper", "shadow", "live"] as TradingMode[]).map((mode) => (
+          {(["paper", "live"] as TradingMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => handleModeChange(mode)}
@@ -168,9 +167,8 @@ export function LiveTradingCard({
           ))}
         </div>
         <p className="text-xs text-muted-foreground mt-1">
-          {selectedMode === "paper" && "Simulated trades only - no real money"}
-          {selectedMode === "shadow" &&
-            "Live signals, paper execution - validation mode"}
+          {selectedMode === "paper" &&
+            "Real signals, simulated execution - no real money"}
           {selectedMode === "live" && "Real money trades - use with caution!"}
         </p>
       </div>
@@ -277,8 +275,8 @@ export function LiveTradingCard({
                       ? "bg-green-500/20 text-green-400"
                       : order.status === "failed"
                         ? "bg-red-500/20 text-red-400"
-                        : order.status === "shadow"
-                          ? "bg-yellow-500/20 text-yellow-400"
+                        : order.status === "paper"
+                          ? "bg-blue-500/20 text-blue-400"
                           : "bg-muted text-muted-foreground"
                   }`}
                 >
@@ -304,7 +302,7 @@ export function LiveTradingCard({
               <li>- USDC balance in your Polymarket wallet</li>
               <li>- Approved token allowances for trading</li>
               <li>- Verified your risk limits are appropriate</li>
-              <li>- Tested thoroughly in shadow mode first</li>
+              <li>- Tested thoroughly in paper mode first</li>
             </ul>
             <div className="flex gap-2">
               <button

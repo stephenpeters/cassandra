@@ -178,7 +178,7 @@ export interface PaperAccount {
 }
 
 // Live Trading types
-export type TradingMode = "paper" | "shadow" | "live";
+export type TradingMode = "paper" | "live";
 
 export interface LiveTradingConfig {
   mode: TradingMode;
@@ -225,7 +225,7 @@ export interface LiveOrder {
   size_usd: number;
   price: number;
   order_type: string;
-  status: "pending" | "pending_confirmation" | "submitted" | "filled" | "partial" | "cancelled" | "failed" | "rejected" | "shadow";
+  status: "pending" | "pending_confirmation" | "submitted" | "filled" | "partial" | "cancelled" | "failed" | "rejected" | "paper";
   created_at: number;
   filled_at: number | null;
   filled_size: number;

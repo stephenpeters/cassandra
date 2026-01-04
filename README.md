@@ -83,11 +83,10 @@ chmod +x start.sh
 
 ## Trading Modes
 
-| Mode     | Description                                    |
-|----------|------------------------------------------------|
-| `paper`  | Simulated trades only - no real money          |
-| `shadow` | Live signals, paper execution - for validation |
-| `live`   | Real money trades via Polymarket CLOB          |
+| Mode    | Description                                       |
+|---------|---------------------------------------------------|
+| `paper` | Real signals, simulated execution - no real money |
+| `live`  | Real money trades via Polymarket CLOB             |
 
 ## Configuration
 
@@ -100,7 +99,7 @@ cp backend/.env.example backend/.env
 Key settings:
 
 ```env
-TRADING_MODE=paper                    # paper/shadow/live
+TRADING_MODE=paper                    # paper/live
 POLYMARKET_PRIVATE_KEY=your_key       # Required for live trading
 TELEGRAM_BOT_TOKEN=your_token         # For alerts
 TELEGRAM_CHAT_ID=your_chat_id
@@ -118,6 +117,11 @@ API_KEY=your_secret_key               # Protects live trading endpoints
 | `GET /api/momentum` | Current momentum signals |
 | `GET /api/markets-15m` | Active 15-minute markets |
 | `GET /api/paper-trading/account` | Paper trading status |
+| `GET /api/trades` | Recent trades from SQLite ledger |
+| `GET /api/trades/stats` | Aggregate trade statistics |
+| `GET /api/trades/daily` | Daily P&L breakdown |
+| `GET /api/trades/by-symbol` | Per-symbol breakdown |
+| `GET /api/trades/by-checkpoint` | Per-checkpoint breakdown |
 
 ### Protected (require `X-API-Key` header)
 
@@ -128,6 +132,7 @@ API_KEY=your_secret_key               # Protects live trading endpoints
 | `POST /api/live-trading/kill-switch` | Emergency stop |
 | `GET /api/live-trading/allowances` | Check token allowances |
 | `POST /api/live-trading/allowances` | Set token allowances |
+| `GET /api/trades/export/csv` | Export trades to CSV |
 
 ### WebSocket (`ws://localhost:8000/ws`)
 
@@ -147,6 +152,7 @@ cassandra/
 │   ├── server.py           # FastAPI WebSocket server
 │   ├── paper_trading.py    # Paper trading engine
 │   ├── live_trading.py     # Live trading with CLOB
+│   ├── trade_ledger.py     # SQLite trade ledger
 │   ├── data_feeds.py       # Binance + Polymarket feeds
 │   ├── config.py           # Whale wallets, settings
 │   └── production/         # Deployment configs

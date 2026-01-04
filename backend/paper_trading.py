@@ -18,8 +18,11 @@ import os
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from trade_ledger import TradeLedger
 
 
 # ============================================================================
@@ -331,7 +334,7 @@ class PaperTradingEngine:
         "12.5m": 0.70,
     }
 
-    def __init__(self, data_dir: str = "."):
+    def __init__(self, data_dir: str = ".", ledger: Optional["TradeLedger"] = None):
         self.config = PaperTradingConfig()
         self.account = PaperAccount(
             balance=self.config.starting_balance,
@@ -341,6 +344,9 @@ class PaperTradingEngine:
         self.recent_signals: list[CheckpointSignal] = []
         self.latency_gaps: list[LatencyGap] = []  # Track recent gaps for UI
         self.data_dir = data_dir
+
+        # Trade ledger for persistent storage
+        self.ledger = ledger
 
         # Track last trade time per symbol for cooldown
         self._last_trade_time: dict[str, int] = {}
@@ -1039,6 +1045,15 @@ class PaperTradingEngine:
                     self.account.trade_history = self.account.trade_history[:100]
 
                 positions_to_remove.append(position)
+
+                # Record to ledger for persistent storage
+                if self.ledger:
+                    try:
+                        from trade_ledger import create_trade_record_from_paper
+                        trade_record = create_trade_record_from_paper(trade)
+                        self.ledger.record_trade(trade_record)
+                    except Exception as e:
+                        print(f"[PaperTrading] Failed to record trade to ledger: {e}")
 
                 # Fire callback
                 if self.on_trade:

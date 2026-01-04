@@ -50,7 +50,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
 # =============================================================================
 
 class TradingModeRequest(BaseModel):
-    mode: str = Field(..., pattern="^(paper|shadow|live)$")
+    mode: str = Field(..., pattern="^(paper|live)$")
 
 
 class KillSwitchRequest(BaseModel):
@@ -103,6 +103,7 @@ from live_trading import (
     TradingMode,
     CLOB_AVAILABLE,
 )
+from trade_ledger import TradeLedger
 
 # ============================================================================
 # FASTAPI APP
@@ -135,6 +136,7 @@ momentum_calc: MomentumCalculator = None
 polymarket_feed: Polymarket15MinFeed = None
 paper_trading: PaperTradingEngine = None
 live_trading: LiveTradingEngine = None
+trade_ledger: TradeLedger = None
 
 # WebSocket clients
 ws_clients: Set[WebSocket] = set()
@@ -150,7 +152,7 @@ background_tasks: list[asyncio.Task] = []
 @app.on_event("startup")
 async def startup():
     """Initialize data feeds on startup"""
-    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading
+    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading, trade_ledger
 
     # Initialize Binance feed with crypto symbols
     symbols = [v["binance"] for v in CryptoExchangeAPI.SYMBOLS.values()]
@@ -198,8 +200,12 @@ async def startup():
     # Initialize momentum calculator
     momentum_calc = MomentumCalculator(binance_feed)
 
+    # Initialize trade ledger for persistent storage
+    trade_ledger = TradeLedger(db_path="trades.db")
+    print(f"[Server] Trade ledger initialized: trades.db")
+
     # Initialize paper trading engine
-    paper_trading = PaperTradingEngine(data_dir=".")
+    paper_trading = PaperTradingEngine(data_dir=".", ledger=trade_ledger)
     paper_trading.on_signal = lambda sig: asyncio.create_task(
         broadcast({"type": "paper_signal", "data": sig.to_dict()})
     )
@@ -218,6 +224,7 @@ async def startup():
         private_key=private_key,
         config=live_config,
         data_dir=".",
+        ledger=trade_ledger,
     )
 
     # Set up live trading callbacks
@@ -808,9 +815,8 @@ async def set_trading_mode(
 ):
     """
     Set trading mode (requires API key):
-    - paper: Simulated trades only (no real money)
-    - shadow: Live signals, paper execution (validation)
-    - live: Real money trades (CAUTION!)
+    - paper: Real signals, simulated execution (no real money)
+    - live: Real money trades via Polymarket CLOB (CAUTION!)
     """
     if not live_trading:
         return {"error": "Live trading not initialized"}
@@ -988,6 +994,100 @@ async def reject_pending_order(
             return {"status": "ok", "order": order.to_dict()}
 
     return JSONResponse({"error": f"Order not found or not pending: {request.order_id}"}, status_code=404)
+
+
+# ============================================================================
+# TRADE LEDGER API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/trades")
+async def get_trades(
+    mode: Optional[str] = None,
+    symbol: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Get recent trades from the ledger"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    trades = trade_ledger.get_trades(
+        mode=mode,
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+    )
+    return {"trades": [t.to_dict() for t in trades]}
+
+
+@app.get("/api/trades/stats")
+async def get_trade_stats(
+    mode: Optional[str] = None,
+    symbol: Optional[str] = None,
+):
+    """Get aggregate trade statistics"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    return trade_ledger.get_stats(mode=mode, symbol=symbol)
+
+
+@app.get("/api/trades/daily")
+async def get_daily_stats(
+    days: int = 30,
+    mode: Optional[str] = None,
+):
+    """Get daily P&L breakdown"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    return {"daily": trade_ledger.get_daily_stats(days=days, mode=mode)}
+
+
+@app.get("/api/trades/by-symbol")
+async def get_symbol_stats(
+    mode: Optional[str] = None,
+):
+    """Get per-symbol breakdown"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    return {"symbols": trade_ledger.get_symbol_stats(mode=mode)}
+
+
+@app.get("/api/trades/by-checkpoint")
+async def get_checkpoint_stats(
+    mode: Optional[str] = None,
+):
+    """Get per-checkpoint breakdown (to see which checkpoints are most profitable)"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    return {"checkpoints": trade_ledger.get_checkpoint_stats(mode=mode)}
+
+
+@app.get("/api/trades/export/csv")
+async def export_trades_csv(
+    mode: Optional[str] = None,
+    _: str = Depends(verify_api_key),
+):
+    """Export trades to CSV (requires API key)"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    import tempfile
+    from fastapi.responses import FileResponse
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        filepath = f.name
+
+    count = trade_ledger.export_csv(filepath, mode=mode)
+    return FileResponse(
+        filepath,
+        media_type="text/csv",
+        filename=f"trades_{mode or 'all'}.csv",
+        headers={"X-Trade-Count": str(count)}
+    )
 
 
 # ============================================================================

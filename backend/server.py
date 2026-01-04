@@ -218,27 +218,33 @@ async def broadcast_markets_loop():
             })
 
 
-# Paper trading checkpoint tracking
-_last_checkpoint_times: dict[str, dict[str, int]] = {}  # symbol -> checkpoint -> last_triggered
+# Track which market windows we've recorded open prices for
+_recorded_opens: set[str] = set()  # "SYMBOL_market_start"
 
 
 async def paper_trading_loop():
     """
-    Paper trading signal generation loop.
+    Latency arbitrage paper trading loop.
 
-    Checks for checkpoint times (3m, 7m, 10m, 12.5m) into each 15-min window
-    and triggers signal generation. Uses simulated markets when no real
-    Polymarket markets are available.
+    Exploits the 30-60 second gap between Binance price movements and
+    Polymarket price adjustments. Runs every second to detect opportunities.
+
+    Strategy:
+    1. Record Binance price at each market window open
+    2. Monitor current Binance price vs open
+    3. Calculate implied UP probability from price move
+    4. Compare to Polymarket UP price
+    5. Execute when edge exceeds threshold (default 5%)
     """
-    global _last_checkpoint_times
+    global _recorded_opens
 
     while True:
-        await asyncio.sleep(1)  # Check every second
+        await asyncio.sleep(1)  # Check every second for latency opportunities
 
         if not paper_trading or not paper_trading.config.enabled:
             continue
 
-        if not polymarket_feed or not momentum_calc:
+        if not polymarket_feed or not binance_feed:
             continue
 
         now = int(datetime.now().timestamp())
@@ -246,7 +252,7 @@ async def paper_trading_loop():
         # Get active 15-minute markets from Polymarket
         active_markets = polymarket_feed.get_active_markets()
         if not active_markets:
-            continue  # No active markets right now
+            continue
 
         for symbol, market_data in active_markets.items():
             market_start = market_data.get("start_time", 0)
@@ -256,48 +262,56 @@ async def paper_trading_loop():
             if not market_start or not market_end or not is_active:
                 continue
 
+            # Get current Binance price
+            binance_sym = f"{symbol}usdt".lower()
+            candles = binance_feed.candles.get(binance_sym, [])
+            if not candles:
+                continue
+
+            current_price = candles[-1].close
+
+            # Record the open price at market window start (within first 10 seconds)
             elapsed = now - market_start
+            open_key = f"{symbol}_{market_start}"
 
-            # Get momentum data for signal calculation
-            binance_sym = f"{symbol}USDT".upper()
-            signals = momentum_calc.get_all_signals()
-            momentum = signals.get(binance_sym, {})
+            if elapsed <= 10 and open_key not in _recorded_opens:
+                paper_trading.record_window_open(symbol, market_start, current_price)
+                _recorded_opens.add(open_key)
+                print(f"[Latency] {symbol} window open recorded: ${current_price:.2f}")
 
-            # Get current market price from Polymarket
-            market_price = market_data.get("price", 0.5)
+            # Clean up old keys (windows that ended)
+            _recorded_opens = {k for k in _recorded_opens if int(k.split("_")[1]) > now - 1800}
 
-            # Check each checkpoint
-            for checkpoint, checkpoint_sec in paper_trading.CHECKPOINTS.items():
-                # Trigger within 5 seconds of checkpoint
-                if abs(elapsed - checkpoint_sec) <= 5:
-                    # Check if we've already triggered this checkpoint for this market window
-                    if symbol not in _last_checkpoint_times:
-                        _last_checkpoint_times[symbol] = {}
+            # Get current Polymarket UP price
+            polymarket_up_price = market_data.get("price", 0.5)
 
-                    last_triggered = _last_checkpoint_times[symbol].get(checkpoint, 0)
+            # Get momentum data for enrichment
+            momentum = {}
+            if momentum_calc:
+                signals = momentum_calc.get_all_signals()
+                momentum = signals.get(f"{symbol}USDT", {})
 
-                    # Only trigger once per market window
-                    if last_triggered != market_start:
-                        _last_checkpoint_times[symbol][checkpoint] = market_start
+            # Check for latency arbitrage opportunity
+            signal = paper_trading.process_latency_opportunity(
+                symbol=symbol,
+                binance_current=current_price,
+                polymarket_up_price=polymarket_up_price,
+                market_start=market_start,
+                market_end=market_end,
+                momentum=momentum,
+            )
 
-                        # Process checkpoint
-                        signal = paper_trading.process_checkpoint(
-                            symbol=symbol,
-                            checkpoint=checkpoint,
-                            momentum=momentum,
-                            market_price=market_price,
-                            market_start=market_start,
-                            market_end=market_end,
-                        )
+            if signal:
+                print(f"[Latency] {symbol} SIGNAL: {signal.signal.value} | "
+                      f"Edge: {signal.edge:.1%} | "
+                      f"Binance: ${signal.momentum.get('binance_current', 0):.2f} | "
+                      f"PM UP: {polymarket_up_price:.1%}")
 
-                        if signal:
-                            print(f"[PaperTrading] {symbol} @ {checkpoint}: {signal.signal.value} (edge: {signal.edge:.1%})")
-
-                            # Broadcast the signal to all clients
-                            await broadcast({
-                                "type": "paper_signal",
-                                "data": signal.to_dict(),
-                            })
+                # Broadcast the signal to all clients
+                await broadcast({
+                    "type": "paper_signal",
+                    "data": signal.to_dict(),
+                })
 
         # Check for market resolutions (positions that need settling)
         for position in list(paper_trading.account.positions):
@@ -307,19 +321,32 @@ async def paper_trading_loop():
                 candles = binance_feed.candles.get(binance_sym, [])
 
                 if len(candles) >= 2:
-                    # Find open and close prices for the market window
-                    open_price = None
-                    close_price = candles[-1].close
+                    # Get the open price we recorded
+                    open_key = f"{position.symbol}_{position.market_start}"
+                    open_price = paper_trading._binance_opens.get(open_key)
 
+                    # Fallback: try to find from candles
+                    if not open_price:
+                        for c in candles:
+                            candle_time = c.timestamp // 1000
+                            if candle_time >= position.market_start:
+                                open_price = c.open
+                                break
+
+                    # Get close price
+                    close_price = candles[-1].close
                     for c in candles:
                         candle_time = c.timestamp // 1000
-                        if candle_time >= position.market_start and open_price is None:
-                            open_price = c.open
                         if candle_time >= position.market_end:
                             close_price = c.close
                             break
 
                     if open_price and close_price:
+                        resolution = "UP" if close_price > open_price else "DOWN"
+                        print(f"[Latency] {position.symbol} RESOLVED: {resolution} | "
+                              f"Open: ${open_price:.2f} -> Close: ${close_price:.2f} | "
+                              f"Position: {position.side}")
+
                         paper_trading.resolve_market(
                             symbol=position.symbol,
                             market_start=position.market_start,

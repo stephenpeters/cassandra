@@ -1,8 +1,16 @@
 """
 Paper Trading System for Polymarket 15-Minute Crypto Markets.
 
-Simulates trading on prediction markets using Binance momentum signals.
-Tracks positions, P&L, and generates trading signals at checkpoints.
+Exploits the 30-60 second latency gap between Binance price movements
+and Polymarket price adjustments. When Binance moves significantly,
+Polymarket lags behind, creating an edge window.
+
+Strategy:
+1. Track Binance price at market window open
+2. Monitor real-time Binance price vs open price
+3. Calculate implied probability from current price move
+4. Compare to Polymarket UP price - if gap > threshold, execute
+5. Gap typically closes within 30-60 seconds
 """
 
 import json
@@ -27,6 +35,11 @@ class PaperTradingConfig:
     commission_pct: float = 0.1  # 0.1% commission
     max_position_pct: float = 2.0  # Max 2% of account per position
     daily_loss_limit_pct: float = 10.0  # Stop trading if 10% daily loss
+
+    # Latency arbitrage settings
+    min_edge_pct: float = 5.0  # Minimum edge to trigger (5%)
+    min_time_remaining_sec: int = 120  # Don't trade in last 2 minutes
+    cooldown_sec: int = 30  # Seconds between trades per symbol
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -53,7 +66,7 @@ class SignalType(Enum):
 class CheckpointSignal:
     """Signal generated at a checkpoint"""
     symbol: str
-    checkpoint: str  # "3m", "7m", "10m", "12.5m"
+    checkpoint: str  # "3m", "7m", "10m", "12.5m" or "latency"
     timestamp: int
     signal: SignalType
     fair_value: float  # Calculated fair value for UP outcome
@@ -73,6 +86,33 @@ class CheckpointSignal:
             "edge": round(self.edge, 3),
             "confidence": round(self.confidence, 3),
             "momentum": self.momentum,
+        }
+
+
+@dataclass
+class LatencyGap:
+    """Tracks real-time gap between Binance and Polymarket"""
+    symbol: str
+    timestamp: int
+    binance_open: float  # Binance price at market window open
+    binance_current: float  # Current Binance price
+    binance_change_pct: float  # % change since open
+    implied_up_prob: float  # Probability UP wins based on current Binance move
+    polymarket_up_price: float  # Current Polymarket UP price
+    edge: float  # implied_up_prob - polymarket_up_price (positive = buy UP)
+    time_remaining_sec: int  # Seconds until market closes
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "timestamp": self.timestamp,
+            "binance_open": round(self.binance_open, 2),
+            "binance_current": round(self.binance_current, 2),
+            "binance_change_pct": round(self.binance_change_pct, 4),
+            "implied_up_prob": round(self.implied_up_prob, 3),
+            "polymarket_up_price": round(self.polymarket_up_price, 3),
+            "edge": round(self.edge, 3),
+            "time_remaining_sec": self.time_remaining_sec,
         }
 
 
@@ -244,17 +284,21 @@ class MarketWindow:
 
 class PaperTradingEngine:
     """
-    Core paper trading engine.
+    Core paper trading engine using latency arbitrage.
+
+    The strategy exploits the 30-60 second gap between Binance price movements
+    and Polymarket price adjustments. When Binance moves significantly during
+    a 15-minute window, we can predict the outcome before Polymarket adjusts.
 
     Handles:
-    - Signal generation at checkpoints (3m, 7m, 10m, 12.5m)
+    - Real-time latency gap detection
     - Position management
     - Risk enforcement
     - Market resolution tracking
     - Persistence
     """
 
-    # Checkpoint times in seconds from market start
+    # Checkpoint times in seconds from market start (legacy, kept for compatibility)
     CHECKPOINTS = {
         "3m": 180,
         "7m": 420,
@@ -278,12 +322,20 @@ class PaperTradingEngine:
         )
         self.market_windows: dict[str, MarketWindow] = {}  # key: "SYMBOL_start_time"
         self.recent_signals: list[CheckpointSignal] = []
+        self.latency_gaps: list[LatencyGap] = []  # Track recent gaps for UI
         self.data_dir = data_dir
+
+        # Track last trade time per symbol for cooldown
+        self._last_trade_time: dict[str, int] = {}
+
+        # Track Binance open prices for each active window
+        self._binance_opens: dict[str, float] = {}  # "SYMBOL_market_start" -> open price
 
         # Callbacks
         self.on_signal: Optional[Callable[[CheckpointSignal], None]] = None
         self.on_trade: Optional[Callable[[PaperTrade], None]] = None
         self.on_position_open: Optional[Callable[[PaperPosition], None]] = None
+        self.on_latency_gap: Optional[Callable[[LatencyGap], None]] = None
 
         # Load persisted state
         self._load_state()
@@ -445,6 +497,247 @@ class PaperTradingEngine:
             self._add_to_position(symbol, "DOWN", 1 - market_price, market_start, checkpoint, signal.confidence)
 
         return signal
+
+    # -------------------------------------------------------------------------
+    # LATENCY ARBITRAGE
+    # -------------------------------------------------------------------------
+
+    def record_window_open(self, symbol: str, market_start: int, binance_price: float):
+        """
+        Record the Binance price at the start of a market window.
+        This is the reference price for calculating the move.
+        """
+        key = f"{symbol}_{market_start}"
+        self._binance_opens[key] = binance_price
+
+    def calculate_implied_probability(self, price_change_pct: float, time_remaining_sec: int) -> float:
+        """
+        Calculate implied probability that UP will win based on:
+        1. Current price change from window open
+        2. Time remaining in the window
+
+        A positive price_change_pct means price is higher than open,
+        so UP is more likely to win.
+
+        With more time remaining, there's more chance for reversal,
+        so we dampen the probability slightly.
+        """
+        # Base probability from current price change
+        # A 0.1% move has ~65% chance of staying up/down
+        # A 0.5% move has ~85% chance
+        base_prob = 0.5
+
+        # Sigmoid-like scaling for price impact
+        # Small moves have less certainty, large moves approach certainty
+        abs_change = abs(price_change_pct)
+
+        if abs_change < 0.01:
+            price_impact = 0
+        elif abs_change < 0.05:
+            price_impact = abs_change * 2  # 0.05% move = 10% edge
+        elif abs_change < 0.2:
+            price_impact = 0.1 + (abs_change - 0.05) * 1.5  # 0.2% move = 32% edge
+        else:
+            price_impact = min(0.45, 0.32 + (abs_change - 0.2) * 0.5)  # Max out at 95%
+
+        # Time dampening: more time = less certainty
+        # Last 2 min: no dampening. First 5 min: 30% dampening
+        time_factor = 1.0
+        if time_remaining_sec > 600:  # > 10 min left
+            time_factor = 0.7
+        elif time_remaining_sec > 300:  # 5-10 min left
+            time_factor = 0.85
+        elif time_remaining_sec > 120:  # 2-5 min left
+            time_factor = 0.95
+
+        adjusted_impact = price_impact * time_factor
+
+        # Direction: positive change = UP more likely
+        if price_change_pct >= 0:
+            return min(0.95, base_prob + adjusted_impact)
+        else:
+            return max(0.05, base_prob - adjusted_impact)
+
+    def check_latency_opportunity(
+        self,
+        symbol: str,
+        binance_current: float,
+        polymarket_up_price: float,
+        market_start: int,
+        market_end: int,
+    ) -> Optional[LatencyGap]:
+        """
+        Check for a latency arbitrage opportunity.
+
+        Called frequently (every 1-2 seconds) with current prices.
+        Returns a LatencyGap if there's a significant edge.
+        """
+        now = int(time.time())
+        time_remaining = market_end - now
+
+        # Get the Binance open price for this window
+        key = f"{symbol}_{market_start}"
+        binance_open = self._binance_opens.get(key)
+
+        if binance_open is None:
+            return None
+
+        # Calculate price change
+        price_change_pct = ((binance_current - binance_open) / binance_open) * 100
+
+        # Calculate implied probability
+        implied_prob = self.calculate_implied_probability(price_change_pct, time_remaining)
+
+        # Calculate edge
+        edge = implied_prob - polymarket_up_price
+
+        gap = LatencyGap(
+            symbol=symbol,
+            timestamp=now,
+            binance_open=binance_open,
+            binance_current=binance_current,
+            binance_change_pct=price_change_pct,
+            implied_up_prob=implied_prob,
+            polymarket_up_price=polymarket_up_price,
+            edge=edge,
+            time_remaining_sec=time_remaining,
+        )
+
+        # Track for UI
+        self.latency_gaps.append(gap)
+        if len(self.latency_gaps) > 100:
+            self.latency_gaps = self.latency_gaps[-100:]
+
+        # Fire callback for UI updates
+        if self.on_latency_gap:
+            self.on_latency_gap(gap)
+
+        return gap
+
+    def process_latency_opportunity(
+        self,
+        symbol: str,
+        binance_current: float,
+        polymarket_up_price: float,
+        market_start: int,
+        market_end: int,
+        momentum: Optional[dict] = None,
+    ) -> Optional[CheckpointSignal]:
+        """
+        Process a potential latency arbitrage opportunity.
+
+        This is the main entry point called every 1-2 seconds.
+        It checks for edge and executes if conditions are met.
+        """
+        if not self.config.enabled:
+            return None
+
+        if self.account.trading_halted:
+            return None
+
+        now = int(time.time())
+        time_remaining = market_end - now
+
+        # Don't trade in the last min_time_remaining seconds
+        if time_remaining < self.config.min_time_remaining_sec:
+            return None
+
+        # Check cooldown
+        last_trade = self._last_trade_time.get(symbol, 0)
+        if now - last_trade < self.config.cooldown_sec:
+            return None
+
+        # Check if we already have a position for this window
+        has_position = any(
+            p.symbol == symbol and p.market_start == market_start
+            for p in self.account.positions
+        )
+        if has_position:
+            return None
+
+        # Check for latency opportunity
+        gap = self.check_latency_opportunity(
+            symbol=symbol,
+            binance_current=binance_current,
+            polymarket_up_price=polymarket_up_price,
+            market_start=market_start,
+            market_end=market_end,
+        )
+
+        if gap is None:
+            return None
+
+        # Check if edge is sufficient
+        min_edge = self.config.min_edge_pct / 100
+        abs_edge = abs(gap.edge)
+
+        if abs_edge < min_edge:
+            return None
+
+        # Determine signal type
+        if gap.edge > min_edge:
+            # Binance is up, Polymarket hasn't adjusted -> buy UP
+            signal_type = SignalType.BUY_UP
+            entry_price = polymarket_up_price
+            side = "UP"
+        elif gap.edge < -min_edge:
+            # Binance is down, Polymarket hasn't adjusted -> buy DOWN
+            signal_type = SignalType.BUY_DOWN
+            entry_price = 1 - polymarket_up_price
+            side = "DOWN"
+        else:
+            return None
+
+        # Calculate confidence from edge magnitude
+        confidence = min(1.0, abs_edge * 5)  # 20% edge = 100% confidence
+
+        # Build momentum dict from gap data
+        gap_momentum = {
+            "direction": "UP" if gap.binance_change_pct > 0 else "DOWN",
+            "confidence": confidence,
+            "volume_delta": 0,
+            "price_change_pct": gap.binance_change_pct,
+            "orderbook_imbalance": 0,
+            "binance_open": gap.binance_open,
+            "binance_current": gap.binance_current,
+            "time_remaining": gap.time_remaining_sec,
+        }
+
+        if momentum:
+            gap_momentum.update(momentum)
+
+        signal = CheckpointSignal(
+            symbol=symbol,
+            checkpoint="latency",
+            timestamp=now,
+            signal=signal_type,
+            fair_value=gap.implied_up_prob,
+            market_price=polymarket_up_price,
+            edge=gap.edge,
+            confidence=confidence,
+            momentum=gap_momentum,
+        )
+
+        # Track signal
+        self.recent_signals.append(signal)
+        if len(self.recent_signals) > 100:
+            self.recent_signals = self.recent_signals[-100:]
+
+        # Execute the trade
+        self._open_position(symbol, side, entry_price, market_start, market_end, "latency", confidence)
+
+        # Update cooldown
+        self._last_trade_time[symbol] = now
+
+        # Fire callback
+        if self.on_signal:
+            self.on_signal(signal)
+
+        return signal
+
+    def get_latency_gaps(self, limit: int = 20) -> list[dict]:
+        """Get recent latency gaps for UI"""
+        return [g.to_dict() for g in self.latency_gaps[-limit:]]
 
     # -------------------------------------------------------------------------
     # POSITION MANAGEMENT

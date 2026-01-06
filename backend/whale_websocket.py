@@ -18,8 +18,12 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-# Account88888's known wallet (from Polymarket profile)
+# Profitable whale wallets (from Polymarket profiles)
+# Account88888: +$446K lifetime, 60% win rate on BTC 15-min
+# gabagool22: +$529K lifetime, 62% win rate on BTC 15-min
+# Note: updateupdate excluded - only 18% accuracy on 15-min markets
 ACCOUNT88888_WALLET = "0x7f69983eb28245bba0d5083502a78744a8f66162"
+GABAGOOL22_WALLET = "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d"
 
 # Polymarket WebSocket endpoint
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -111,9 +115,10 @@ class WhaleWebSocketDetector:
             "last_trade_time": None,
         })
 
-        # Tracked wallets
+        # Tracked wallets (only profitable whales)
         self._tracked_wallets = {
             ACCOUNT88888_WALLET.lower(): "Account88888",
+            GABAGOOL22_WALLET.lower(): "gabagool22",
         }
 
         # WebSocket connection

@@ -62,33 +62,44 @@ This document reviews all trading strategies developed for Polymarket's 15-minut
 
 ### 2. Whale Following Strategy (Backtested)
 
-**Concept**: Follow the positions of profitable traders like gabagool22 with a realistic detection lag.
+**Concept**: Follow the positions of profitable traders with WebSocket-based detection.
 
-**Implementation** (`whale_following_backtest.py`):
+**Implementation** (`whale_websocket.py`, `whale_following_backtest.py`):
 ```
-1. Detect whale's directional bias in real-time trades
-2. Account for 40-second detection lag
-3. Enter position in same direction as whale
-4. Assume 0.50 entry price with 1% slippage
+1. Connect to Polymarket CLOB WebSocket for real-time trades
+2. Filter for tracked whale wallets (Account88888, gabagool22)
+3. Detect directional bias from net UP vs DOWN positions
+4. Enter position following whale's direction before 7:30 checkpoint
 ```
 
-**Configuration**:
-- Starting balance: $1,000
+**WebSocket vs Polling Latency**:
+| Method | Latency | Impact |
+|--------|---------|--------|
+| Polling (old) | 39 seconds | Edge eroded, -16.8% ROI |
+| WebSocket | 2-5 seconds | Edge preserved, +2.6% to +13.3% ROI |
+
+**Backtest Results (20 BTC markets)**:
+
+| Whale Selection | Latency | Win Rate | ROI |
+|-----------------|---------|----------|-----|
+| All whales | 5s | 37% | **-9.9%** |
+| Account88888 + gabagool22 only | 5s | 53% | **+2.6%** |
+| Account88888 + gabagool22 only | 2s | 58% | **+13.3%** |
+
+**Per-Whale Accuracy (from 20-market sample)**:
+| Whale | Trades | Win Rate | P&L |
+|-------|--------|----------|-----|
+| Account88888 | 11 | 45% | -$67 |
+| gabagool22 | 8 | **62%** | +$93 |
+| updateupdate | 11 | **18%** | -$133 |
+
+**Key Finding**: updateupdate has terrible accuracy (18%) on BTC 15-min markets despite being profitable overall (likely from other market types). **Exclude updateupdate from whale following.**
+
+**Recommended Configuration**:
+- Follow: Account88888, gabagool22 only
+- WebSocket latency: ~2-5 seconds expected
+- Entry deadline: Before 7:30 (450s) into window
 - Position size: 5% of balance per trade
-- Detection lag: 40 seconds
-- Slippage: 1%
-- Commission: 0.1%
-
-**Results from gabagool22 backtest**:
-- Total markets analyzed: 1,012+ positions
-- Strategy alignment with whale bias: ~53%
-- Profitability: Marginal - detection lag erodes edge
-
-**Issues Identified**:
-1. 40-second lag is too slow - gabagool22 often enters early
-2. gabagool22's edge may come from information we can't detect
-3. Whale positions may be hedged or part of larger strategies
-4. Size matters - following with 5% doesn't capture their conviction sizing
 
 ---
 

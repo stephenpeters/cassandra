@@ -104,6 +104,33 @@ from live_trading import (
     CLOB_AVAILABLE,
 )
 from trade_ledger import TradeLedger
+from whale_following import (
+    WhaleFollowingStrategy,
+    WhaleFollowConfig,
+    WhaleTradeDetector,
+    WhaleMarketBias,
+    backtest_whale_following,
+    fetch_whale_market_history,
+    fetch_whale_positions_pnl,
+)
+from whale_websocket import (
+    WhaleWebSocketDetector,
+    WhaleTradeEvent,
+    WhaleBiasUpdate,
+    get_whale_ws_detector,
+)
+from pm_websocket import (
+    PMWebSocketClient,
+    PMPriceUpdate,
+    get_pm_ws_client,
+)
+from time_sync import (
+    start_sync_loop,
+    get_synced_timestamp,
+    get_sync_status,
+    sync_with_polymarket,
+    sync_with_ntp,
+)
 
 # ============================================================================
 # FASTAPI APP
@@ -137,6 +164,9 @@ polymarket_feed: Polymarket15MinFeed = None
 paper_trading: PaperTradingEngine = None
 live_trading: LiveTradingEngine = None
 trade_ledger: TradeLedger = None
+whale_detector: WhaleTradeDetector = None
+whale_ws_detector: WhaleWebSocketDetector = None  # WebSocket-based whale detection (~5-15s latency)
+pm_ws_client: PMWebSocketClient = None  # Real-time Polymarket prices (replaces 2s polling)
 
 # WebSocket clients
 ws_clients: Set[WebSocket] = set()
@@ -244,6 +274,114 @@ async def startup():
     )
 
     print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
+
+    # Initialize whale trade detector
+    global whale_detector
+
+    def on_whale_bias_detected(bias: WhaleMarketBias):
+        """Handle whale bias detection - forward to paper trading"""
+        if paper_trading and bias.bias != "NEUTRAL":
+            # Get current Polymarket price
+            current_price = 0.5  # Default
+            if polymarket_feed:
+                markets = polymarket_feed.get_current_markets()
+                for m in markets:
+                    if m.get("symbol") == bias.symbol:
+                        current_price = m.get("up_price", 0.5)
+                        break
+
+            paper_trading.process_whale_bias(
+                whale_name=bias.whale_name,
+                symbol=bias.symbol,
+                bias=bias.bias,
+                bias_confidence=bias.bias_confidence,
+                market_start=bias.market_start,
+                market_end=bias.market_end,
+                detection_latency_sec=bias.detection_latency_sec,
+                polymarket_price=current_price,
+            )
+
+        # Broadcast to frontend
+        asyncio.create_task(
+            broadcast({"type": "whale_bias", "data": bias.to_dict()})
+        )
+
+    whale_detector = WhaleTradeDetector(
+        whales=["gabagool22"],  # Track gabagool22 by default
+        poll_interval_sec=1.0,  # Poll every second
+        on_bias_detected=on_whale_bias_detected,
+    )
+    print("[Server] Whale trade detector initialized")
+
+    # Initialize WebSocket-based whale detector for Account88888
+    # This has ~5-15s latency vs ~39s for polling
+    global whale_ws_detector
+
+    def on_ws_whale_trade(event: WhaleTradeEvent):
+        """Handle real-time whale trade from WebSocket"""
+        print(f"[WhaleWS] {event.whale_name} {event.side} {event.outcome} on {event.symbol}: "
+              f"${event.usd_value:.2f} (latency: {event.detection_latency_ms}ms)")
+
+        # Broadcast to frontend
+        asyncio.create_task(
+            broadcast({"type": "whale_ws_trade", "data": event.to_dict()})
+        )
+
+    def on_ws_bias_update(bias: WhaleBiasUpdate):
+        """Handle bias update from WebSocket whale detector"""
+        print(f"[WhaleWS] {bias.whale_name} bias on {bias.symbol}: {bias.bias} "
+              f"(confidence: {bias.confidence:.0%}, trades: {bias.num_trades})")
+
+        # Forward to paper trading if bias is actionable
+        if paper_trading and bias.bias != "NEUTRAL":
+            # Get current Polymarket price
+            current_price = 0.5
+            if polymarket_feed:
+                markets = polymarket_feed.get_active_markets()
+                market = markets.get(bias.symbol, {})
+                current_price = market.get("price", 0.5)
+                market_start = market.get("start_time", 0)
+                market_end = market.get("end_time", 0)
+
+                if market_start and market_end:
+                    paper_trading.process_whale_bias(
+                        whale_name=bias.whale_name,
+                        symbol=bias.symbol,
+                        bias=bias.bias,
+                        bias_confidence=bias.confidence,
+                        market_start=market_start,
+                        market_end=market_end,
+                        detection_latency_sec=bias.first_trade_elapsed,
+                        polymarket_price=current_price,
+                    )
+
+        # Broadcast to frontend
+        asyncio.create_task(
+            broadcast({"type": "whale_ws_bias", "data": bias.to_dict()})
+        )
+
+    whale_ws_detector = get_whale_ws_detector()
+    whale_ws_detector.on_whale_trade = on_ws_whale_trade
+    whale_ws_detector.on_bias_update = on_ws_bias_update
+    print("[Server] WebSocket whale detector initialized (targeting Account88888)")
+
+    # Initialize Polymarket WebSocket for real-time prices
+    global pm_ws_client
+
+    def on_pm_price_update(update: PMPriceUpdate):
+        """Handle real-time price update from Polymarket WebSocket"""
+        # Broadcast to frontend for instant chart updates
+        asyncio.create_task(
+            broadcast({
+                "type": "pm_price",
+                "data": update.to_dict()
+            })
+        )
+
+    pm_ws_client = get_pm_ws_client()
+    pm_ws_client.on_price_update = on_pm_price_update
+    print("[Server] Polymarket WebSocket client initialized for real-time prices")
+
     if not CLOB_AVAILABLE:
         print("[Server] WARNING: py-clob-client not installed - live trading disabled")
 
@@ -256,6 +394,21 @@ async def startup():
     background_tasks.append(asyncio.create_task(broadcast_momentum_loop()))
     background_tasks.append(asyncio.create_task(broadcast_markets_loop()))
     background_tasks.append(asyncio.create_task(paper_trading_loop()))
+    background_tasks.append(asyncio.create_task(start_sync_loop()))
+    background_tasks.append(asyncio.create_task(whale_detector.start()))
+    background_tasks.append(asyncio.create_task(whale_ws_detector.start()))
+    background_tasks.append(asyncio.create_task(whale_ws_market_feed_loop()))
+    background_tasks.append(asyncio.create_task(pm_ws_client.start()))
+    background_tasks.append(asyncio.create_task(pm_ws_market_feed_loop()))
+
+    # Do initial time sync
+    success, msg = await sync_with_polymarket()
+    if not success:
+        success, msg = await sync_with_ntp()
+    print(f"[Server] Time sync: {msg}")
+
+    # Load historical markets from file
+    _load_historical_markets()
 
     print("[Server] Started all data feeds")
 
@@ -269,6 +422,12 @@ async def shutdown():
         whale_tracker.stop()
     if polymarket_feed:
         polymarket_feed.stop()
+    if whale_detector:
+        await whale_detector.stop()
+    if whale_ws_detector:
+        await whale_ws_detector.stop()
+    if pm_ws_client:
+        pm_ws_client.stop()
 
     for task in background_tasks:
         task.cancel()
@@ -288,7 +447,10 @@ async def broadcast(message: dict):
     data = json.dumps(message)
     disconnected = set()
 
-    for ws in ws_clients:
+    # Create a copy to avoid "Set changed size during iteration" error
+    clients_snapshot = list(ws_clients)
+
+    for ws in clients_snapshot:
         try:
             await ws.send_text(data)
         except Exception:
@@ -300,9 +462,9 @@ async def broadcast(message: dict):
 
 
 async def broadcast_momentum_loop():
-    """Periodically broadcast momentum signals"""
+    """Periodically broadcast momentum signals (reduced frequency for memory)"""
     while True:
-        await asyncio.sleep(1)  # Every second
+        await asyncio.sleep(3)  # Every 3 seconds (reduced from 1s for memory)
 
         if momentum_calc and ws_clients:
             signals = momentum_calc.get_all_signals()
@@ -312,24 +474,336 @@ async def broadcast_momentum_loop():
             })
 
 
+_markets_loop_counter = 0
+
 async def broadcast_markets_loop():
     """Periodically broadcast active 15-min markets and timing"""
+    global _markets_loop_counter
     while True:
         await asyncio.sleep(2)  # Every 2 seconds
+        _markets_loop_counter += 1
 
         if polymarket_feed and ws_clients:
+            # Only include chart_data every other cycle (4s) to reduce memory
+            include_chart = (_markets_loop_counter % 2 == 0)
+            data = {
+                "active": polymarket_feed.get_active_markets(),
+                "timing": polymarket_feed.get_next_market_time(),
+                "trades": polymarket_feed.get_recent_trades(limit=20),
+            }
+            if include_chart:
+                data["chart_data"] = get_chart_data_for_markets()
+
             await broadcast({
                 "type": "markets_15m",
-                "data": {
-                    "active": polymarket_feed.get_active_markets(),
-                    "timing": polymarket_feed.get_next_market_time(),
-                    "trades": polymarket_feed.get_recent_trades(limit=20),
-                },
+                "data": data,
             })
+
+
+async def whale_ws_market_feed_loop():
+    """
+    Feed active market data to the WebSocket whale detector.
+
+    The whale detector needs token IDs to subscribe to the correct
+    Polymarket WebSocket channels for real-time trade detection.
+    """
+    last_window = 0
+
+    while True:
+        await asyncio.sleep(5)  # Check every 5 seconds
+
+        if not polymarket_feed or not whale_ws_detector:
+            continue
+
+        try:
+            # Get active markets
+            active_markets = polymarket_feed.get_active_markets()
+
+            if not active_markets:
+                continue
+
+            # Check if we're in a new window
+            current_window = min(
+                m.get("start_time", 0) for m in active_markets.values()
+            ) if active_markets else 0
+
+            # Only update detector when window changes or on first run
+            if current_window != last_window:
+                # Format markets for the WebSocket detector
+                ws_markets = {}
+                for symbol, market in active_markets.items():
+                    ws_markets[symbol] = {
+                        "start_time": market.get("start_time", 0),
+                        "end_time": market.get("end_time", 0),
+                        "up_token_id": market.get("up_token_id", market.get("token_id", "")),
+                        "down_token_id": market.get("down_token_id", ""),
+                    }
+
+                whale_ws_detector.set_active_markets(ws_markets)
+                last_window = current_window
+                print(f"[WhaleWS Feed] Updated markets: {list(ws_markets.keys())}")
+
+        except Exception as e:
+            print(f"[WhaleWS Feed] Error: {e}")
+
+
+async def pm_ws_market_feed_loop():
+    """
+    Feed active market token IDs to the Polymarket WebSocket client.
+
+    This subscribes to real-time price updates for active 15-min markets,
+    giving us instant price changes instead of 2-second polling.
+    """
+    last_window = 0
+    subscribed_markets: set[str] = set()
+
+    while True:
+        await asyncio.sleep(5)  # Check every 5 seconds
+
+        if not polymarket_feed or not pm_ws_client:
+            continue
+
+        try:
+            # Get active markets
+            active_markets = polymarket_feed.get_active_markets()
+
+            if not active_markets:
+                continue
+
+            # Check if we're in a new window
+            current_window = min(
+                m.get("start_time", 0) for m in active_markets.values()
+            ) if active_markets else 0
+
+            # Get set of current market symbols
+            current_symbols = set(active_markets.keys())
+
+            # Check for new markets to subscribe
+            new_markets = current_symbols - subscribed_markets
+
+            if new_markets or current_window != last_window:
+                for symbol in current_symbols:
+                    market = active_markets.get(symbol, {})
+                    up_token = market.get("up_token_id", market.get("token_id", ""))
+                    down_token = market.get("down_token_id", "")
+
+                    if up_token or down_token:
+                        await pm_ws_client.subscribe_market(symbol, up_token, down_token)
+
+                subscribed_markets = current_symbols
+                last_window = current_window
+                print(f"[PM-WS Feed] Subscribed to markets: {list(current_symbols)}")
+
+        except Exception as e:
+            print(f"[PM-WS Feed] Error: {e}")
 
 
 # Track which market windows we've recorded open prices for
 _recorded_opens: set[str] = set()  # "SYMBOL_market_start"
+
+# Track market windows for resolution (even without positions)
+_tracked_windows: dict[str, dict] = {}  # "SYMBOL_market_start" -> { symbol, start, end, open_price }
+_resolved_windows: set[str] = set()  # Windows we've already resolved
+
+# ============================================================================
+# MARKET WINDOW CHART DATA TRACKING
+# ============================================================================
+
+# Configuration
+CHART_UPDATE_INTERVAL_SEC = int(os.getenv("CHART_UPDATE_INTERVAL_SEC", "3"))  # Increased from 2 for memory
+
+# Chart data storage: { "SYMBOL_market_start": { "symbol": str, "start_price": float, "data": [...] } }
+_chart_data: dict[str, dict] = {}
+_last_chart_update: dict[str, int] = {}  # "SYMBOL" -> last update timestamp
+
+
+def get_chart_data_for_markets() -> dict[str, dict]:
+    """Get chart data for all active market windows"""
+    result = {}
+    now = int(datetime.now().timestamp())
+
+    for key, data in _chart_data.items():
+        parts = key.rsplit("_", 1)
+        if len(parts) == 2:
+            symbol = parts[0]
+            try:
+                market_start = int(parts[1])
+                # Only include if window is still active (within 15 min)
+                if now < market_start + 900:
+                    result[symbol] = data
+            except ValueError:
+                pass
+
+    return result
+
+
+def record_chart_datapoint(
+    symbol: str,
+    market_start: int,
+    binance_price: float,
+    up_price: float,
+    start_price: float,
+):
+    """Record a data point for the market window chart"""
+    key = f"{symbol}_{market_start}"
+    now = int(datetime.now().timestamp())
+
+    if key not in _chart_data:
+        _chart_data[key] = {
+            "symbol": symbol,
+            "start_price": start_price,
+            "data": [],
+        }
+
+    # Add data point
+    _chart_data[key]["data"].append({
+        "time": now,
+        "binancePrice": round(binance_price, 2),
+        "upPrice": round(up_price, 3),
+        "downPrice": round(1 - up_price, 3),
+    })
+
+    # Keep last 300 points (reduced from 500 for memory - still covers ~10min at 2s intervals)
+    if len(_chart_data[key]["data"]) > 300:
+        _chart_data[key]["data"] = _chart_data[key]["data"][-300:]
+
+
+def cleanup_old_chart_data():
+    """Remove chart data for old market windows"""
+    now = int(datetime.now().timestamp())
+    # Keep data for windows that ended less than 5 minutes ago (reduced from 30min for memory)
+    cutoff = now - 300
+
+    keys_to_remove = []
+    for key in _chart_data:
+        parts = key.rsplit("_", 1)
+        if len(parts) == 2:
+            try:
+                market_start = int(parts[1])
+                # Assume 15-min window, so end is start + 900
+                if market_start + 900 < cutoff:
+                    keys_to_remove.append(key)
+            except ValueError:
+                pass
+
+    for key in keys_to_remove:
+        del _chart_data[key]
+
+
+# ============================================================================
+# HISTORICAL MARKET DATA STORAGE
+# ============================================================================
+
+# Store last N resolved markets for analysis
+HISTORICAL_MARKET_LIMIT = int(os.getenv("HISTORICAL_MARKET_LIMIT", "10"))
+
+# List of resolved markets with all data
+_historical_markets: list[dict] = []
+
+
+def store_resolved_market(
+    symbol: str,
+    market_start: int,
+    market_end: int,
+    binance_open: float,
+    binance_close: float,
+    resolution: str,
+):
+    """
+    Store a resolved market for historical analysis.
+
+    Keeps the last HISTORICAL_MARKET_LIMIT markets with:
+    - Symbol, timing, resolution
+    - Binance open/close prices
+    - Price movement details
+    - Any signals generated during the window
+    - Chart data if available
+    """
+    global _historical_markets
+
+    # Calculate price movement
+    price_change = binance_close - binance_open
+    price_change_pct = (price_change / binance_open) * 100 if binance_open > 0 else 0
+
+    # Get chart data for this window if available
+    chart_key = f"{symbol}_{market_start}"
+    chart_data_copy = None
+    if chart_key in _chart_data:
+        chart_data_copy = _chart_data[chart_key].copy()
+
+    # Get any signals generated during this window
+    signals_in_window = []
+    if paper_trading:
+        for sig in paper_trading.recent_signals:
+            if sig.symbol == symbol and market_start <= sig.timestamp <= market_end:
+                signals_in_window.append(sig.to_dict())
+
+    market_record = {
+        "symbol": symbol,
+        "market_start": market_start,
+        "market_end": market_end,
+        "start_time_str": datetime.fromtimestamp(market_start).strftime("%Y-%m-%d %H:%M:%S"),
+        "end_time_str": datetime.fromtimestamp(market_end).strftime("%Y-%m-%d %H:%M:%S"),
+        "binance_open": round(binance_open, 2),
+        "binance_close": round(binance_close, 2),
+        "price_change": round(price_change, 2),
+        "price_change_pct": round(price_change_pct, 4),
+        "resolution": resolution,
+        "signals": signals_in_window,
+        "chart_data": chart_data_copy,
+        "recorded_at": int(datetime.now().timestamp()),
+    }
+
+    # Avoid duplicates (same symbol + market_start)
+    _historical_markets = [
+        m for m in _historical_markets
+        if not (m["symbol"] == symbol and m["market_start"] == market_start)
+    ]
+
+    # Add new record at beginning
+    _historical_markets.insert(0, market_record)
+
+    # Keep only last N markets
+    if len(_historical_markets) > HISTORICAL_MARKET_LIMIT:
+        _historical_markets = _historical_markets[:HISTORICAL_MARKET_LIMIT]
+
+    # Reduce logging - only log if something significant changed
+    # print(f"[Historical] Stored {symbol} market: {resolution} "
+    #       f"({price_change_pct:+.3f}%) | Total stored: {len(_historical_markets)}")
+
+    # Persist to file for recovery after restart
+    _save_historical_markets()
+
+
+def _save_historical_markets():
+    """Save historical markets to JSON file"""
+    try:
+        with open("historical_markets.json", "w") as f:
+            json.dump(_historical_markets, f, indent=2)
+    except Exception as e:
+        print(f"[Historical] Error saving: {e}")
+
+
+def _load_historical_markets():
+    """Load historical markets from JSON file"""
+    global _historical_markets
+    try:
+        if os.path.exists("historical_markets.json"):
+            with open("historical_markets.json", "r") as f:
+                _historical_markets = json.load(f)
+            print(f"[Historical] Loaded {len(_historical_markets)} markets from file")
+    except Exception as e:
+        print(f"[Historical] Error loading: {e}")
+
+
+def get_historical_markets(symbol: str = None, limit: int = 10) -> list[dict]:
+    """Get historical markets, optionally filtered by symbol"""
+    markets = _historical_markets
+
+    if symbol:
+        markets = [m for m in markets if m["symbol"] == symbol.upper()]
+
+    return markets[:limit]
 
 
 async def paper_trading_loop():
@@ -346,116 +820,216 @@ async def paper_trading_loop():
     4. Compare to Polymarket UP price
     5. Execute when edge exceeds threshold (default 5%)
     """
-    global _recorded_opens
+    global _recorded_opens, _tracked_windows, _resolved_windows
+
+    print("[PTLoop] Paper trading loop started", flush=True)
+    iteration = 0
 
     while True:
-        await asyncio.sleep(1)  # Check every second for latency opportunities
+        try:
+            await asyncio.sleep(1)  # Check every second for latency opportunities
+            iteration += 1
 
-        if not paper_trading or not paper_trading.config.enabled:
-            continue
+            now = int(datetime.now().timestamp())
 
-        if not polymarket_feed or not binance_feed:
-            continue
-
-        now = int(datetime.now().timestamp())
-
-        # Get active 15-minute markets from Polymarket
-        active_markets = polymarket_feed.get_active_markets()
-        if not active_markets:
-            continue
-
-        for symbol, market_data in active_markets.items():
-            market_start = market_data.get("start_time", 0)
-            market_end = market_data.get("end_time", 0)
-            is_active = market_data.get("is_active", True)
-
-            if not market_start or not market_end or not is_active:
-                continue
-
-            # Get current Binance price
-            binance_sym = f"{symbol}usdt".lower()
-            candles = binance_feed.candles.get(binance_sym, [])
-            if not candles:
-                continue
-
-            current_price = candles[-1].close
-
-            # Record the open price at market window start (within first 10 seconds)
-            elapsed = now - market_start
-            open_key = f"{symbol}_{market_start}"
-
-            if elapsed <= 10 and open_key not in _recorded_opens:
-                paper_trading.record_window_open(symbol, market_start, current_price)
-                _recorded_opens.add(open_key)
-                print(f"[Latency] {symbol} window open recorded: ${current_price:.2f}")
-
-            # Clean up old keys (windows that ended)
-            _recorded_opens = {k for k in _recorded_opens if int(k.split("_")[1]) > now - 1800}
-
-            # Get current Polymarket UP price
-            polymarket_up_price = market_data.get("price", 0.5)
-
-            # Get momentum data for enrichment
-            momentum = {}
-            if momentum_calc:
-                signals = momentum_calc.get_all_signals()
-                momentum = signals.get(f"{symbol}USDT", {})
-
-            # Check for latency arbitrage opportunity
-            signal = paper_trading.process_latency_opportunity(
-                symbol=symbol,
-                binance_current=current_price,
-                polymarket_up_price=polymarket_up_price,
-                market_start=market_start,
-                market_end=market_end,
-                momentum=momentum,
-            )
-
-            if signal:
-                print(f"[Latency] {symbol} SIGNAL: {signal.signal.value} | "
-                      f"Edge: {signal.edge:.1%} | "
-                      f"Binance: ${signal.momentum.get('binance_current', 0):.2f} | "
-                      f"PM UP: {polymarket_up_price:.1%}")
-
-                # Broadcast the signal to all clients
+            # Always broadcast paper account state (even when no markets active)
+            if ws_clients and paper_trading and iteration % 5 == 0:
                 await broadcast({
-                    "type": "paper_signal",
-                    "data": signal.to_dict(),
+                    "type": "paper_account",
+                    "data": paper_trading.get_account_summary(),
                 })
 
-        # Check for market resolutions (positions that need settling)
-        for position in list(paper_trading.account.positions):
-            if now >= position.market_end:
-                # Get Binance prices for resolution
-                binance_sym = f"{position.symbol}usdt"
-                candles = binance_feed.candles.get(binance_sym, [])
+            if not polymarket_feed or not binance_feed:
+                if iteration % 10 == 0:
+                    print(f"[PTLoop] Waiting for feeds: polymarket={polymarket_feed is not None}, binance={binance_feed is not None}", flush=True)
+                continue
 
-                if len(candles) >= 2:
+            # Get active 15-minute markets from Polymarket
+            active_markets = polymarket_feed.get_active_markets()
+            if not active_markets:
+                continue
+
+            # Debug: log active markets every 30 seconds
+            if now % 30 == 0:
+                print(f"[PTLoop] Processing {len(active_markets)} markets: {list(active_markets.keys())}", flush=True)
+
+            # Determine if paper trading is active for signal generation
+            paper_trading_active = paper_trading and paper_trading.config.enabled
+
+            for symbol, market_data in active_markets.items():
+                market_start = market_data.get("start_time", 0)
+                market_end = market_data.get("end_time", 0)
+                is_active = market_data.get("is_active", True)
+
+                if not market_start or not market_end or not is_active:
+                    print(f"[Debug] {symbol} skipped: start={market_start}, end={market_end}, active={is_active}", flush=True)
+                    continue
+
+                # Get current Binance price
+                binance_sym = f"{symbol}usdt".lower()
+                candles = binance_feed.candles.get(binance_sym, [])
+                if not candles:
+                    continue
+
+                current_price = candles[-1].close
+
+                # Record the open price at market window start (within first 10 seconds)
+                elapsed = now - market_start
+                open_key = f"{symbol}_{market_start}"
+
+                if elapsed <= 10 and open_key not in _recorded_opens:
+                    # Track window for chart data (always)
+                    _tracked_windows[open_key] = {
+                        "symbol": symbol,
+                        "start": market_start,
+                        "end": market_end,
+                        "open_price": current_price,
+                    }
+                    _recorded_opens.add(open_key)
+                    print(f"[Chart] {symbol} window open recorded: ${current_price:.2f}", flush=True)
+
+                    # Also record for paper trading if active
+                    if paper_trading_active:
+                        paper_trading.record_window_open(symbol, market_start, current_price)
+
+                # Clean up old keys (windows that ended)
+                _recorded_opens = {k for k in _recorded_opens if int(k.split("_")[1]) > now - 1800}
+
+                # Get current Polymarket UP price
+                polymarket_up_price = market_data.get("price", 0.5)
+
+                # Record chart data point at configured interval (always, not just when paper trading)
+                last_update = _last_chart_update.get(symbol, 0)
+                if now - last_update >= CHART_UPDATE_INTERVAL_SEC:
+                    # Track window if not already tracked (allows late joining)
+                    if open_key not in _tracked_windows:
+                        _tracked_windows[open_key] = {
+                            "symbol": symbol,
+                            "start": market_start,
+                            "end": market_end,
+                            "open_price": current_price,  # Use current price as fallback
+                        }
+                        print(f"[Chart] {symbol} late window join at ${current_price:.2f} (elapsed: {elapsed}s)", flush=True)
+
+                    # Get start price from tracked windows
+                    window_info = _tracked_windows.get(open_key, {})
+                    start_price = window_info.get("open_price", current_price)
+                    record_chart_datapoint(
+                        symbol=symbol,
+                        market_start=market_start,
+                        binance_price=current_price,
+                        up_price=polymarket_up_price,
+                        start_price=start_price,
+                    )
+                    _last_chart_update[symbol] = now
+                    # Reduce logging - only log every 15 seconds per symbol
+                    if now % 15 == 0:
+                        print(f"[Chart] {symbol} recorded: Binance=${current_price:.2f}, UP={polymarket_up_price:.1%}", flush=True)
+
+                # Clean up old chart data periodically
+                if now % 60 == 0:
+                    cleanup_old_chart_data()
+
+                # Paper trading signal generation (only when enabled)
+                if not paper_trading_active:
+                    continue
+
+                # Get momentum data for enrichment
+                momentum = {}
+                if momentum_calc:
+                    signals = momentum_calc.get_all_signals()
+                    momentum = signals.get(f"{symbol}USDT", {})
+
+                # Check for latency arbitrage opportunity
+                signal = paper_trading.process_latency_opportunity(
+                    symbol=symbol,
+                    binance_current=current_price,
+                    polymarket_up_price=polymarket_up_price,
+                    market_start=market_start,
+                    market_end=market_end,
+                    momentum=momentum,
+                )
+
+                if signal:
+                    print(f"[Latency] {symbol} SIGNAL: {signal.signal.value} | "
+                          f"Edge: {signal.edge:.1%} | "
+                          f"Binance: ${signal.momentum.get('binance_current', 0):.2f} | "
+                          f"PM UP: {polymarket_up_price:.1%}", flush=True)
+
+                    # Broadcast the signal to all clients
+                    await broadcast({
+                        "type": "paper_signal",
+                        "data": signal.to_dict(),
+                    })
+
+            # =====================================================================
+            # RESOLVE ALL MARKET WINDOWS (for historical tracking)
+            # =====================================================================
+            for window_key, window_info in list(_tracked_windows.items()):
+                if window_key in _resolved_windows:
+                    continue
+
+                if now >= window_info["end"]:
+                    hist_symbol = window_info["symbol"]
+                    binance_sym = f"{hist_symbol}usdt".lower()
+                    candles = binance_feed.candles.get(binance_sym, [])
+
+                    if candles:
+                        close_price = candles[-1].close
+                        open_price = window_info["open_price"]
+                        resolution = "UP" if close_price > open_price else "DOWN"
+
+                        # Store for historical analysis (even if no position was taken)
+                        store_resolved_market(
+                            symbol=hist_symbol,
+                            market_start=window_info["start"],
+                            market_end=window_info["end"],
+                            binance_open=open_price,
+                            binance_close=close_price,
+                            resolution=resolution,
+                        )
+
+                        _resolved_windows.add(window_key)
+                        # Reduce logging noise
+                        # print(f"[Historical] {hist_symbol} window resolved: {resolution} | "
+                        #       f"${open_price:.2f} -> ${close_price:.2f}", flush=True)
+
+            # Clean up old tracked/resolved windows
+            cutoff = now - 3600  # 1 hour
+            _tracked_windows = {k: v for k, v in _tracked_windows.items() if v["end"] > cutoff}
+            _resolved_windows = {k for k in _resolved_windows if int(k.split("_")[1]) > cutoff}
+
+            # Check for market resolutions (positions that need settling)
+            for position in list(paper_trading.account.positions):
+                if now >= position.market_end:
+                    # Get Binance prices for resolution - IMPORTANT: use lowercase key
+                    binance_sym = f"{position.symbol}usdt".lower()
+                    candles = binance_feed.candles.get(binance_sym, [])
+
                     # Get the open price we recorded
                     open_key = f"{position.symbol}_{position.market_start}"
                     open_price = paper_trading._binance_opens.get(open_key)
 
-                    # Fallback: try to find from candles
-                    if not open_price:
+                    # Get current price as close price (market has ended)
+                    close_price = None
+                    if candles:
+                        close_price = candles[-1].close
+
+                    # Fallback: if no open price recorded, use first candle after market start
+                    if not open_price and candles:
                         for c in candles:
                             candle_time = c.timestamp // 1000
                             if candle_time >= position.market_start:
                                 open_price = c.open
+                                print(f"[Resolution] {position.symbol} using candle fallback for open: ${open_price:.2f}", flush=True)
                                 break
-
-                    # Get close price
-                    close_price = candles[-1].close
-                    for c in candles:
-                        candle_time = c.timestamp // 1000
-                        if candle_time >= position.market_end:
-                            close_price = c.close
-                            break
 
                     if open_price and close_price:
                         resolution = "UP" if close_price > open_price else "DOWN"
-                        print(f"[Latency] {position.symbol} RESOLVED: {resolution} | "
+                        is_win = position.side == resolution
+                        print(f"[Resolution] {position.symbol} RESOLVED: {resolution} | "
                               f"Open: ${open_price:.2f} -> Close: ${close_price:.2f} | "
-                              f"Position: {position.side}")
+                              f"Position: {position.side} | Result: {'WIN' if is_win else 'LOSS'}", flush=True)
 
                         paper_trading.resolve_market(
                             symbol=position.symbol,
@@ -465,12 +1039,25 @@ async def paper_trading_loop():
                             binance_close=close_price,
                         )
 
-        # Broadcast paper trading state periodically
-        if ws_clients and paper_trading:
-            await broadcast({
-                "type": "paper_account",
-                "data": paper_trading.get_account_summary(),
-            })
+                        # Store resolved market for historical analysis
+                        store_resolved_market(
+                            symbol=position.symbol,
+                            market_start=position.market_start,
+                            market_end=position.market_end,
+                            binance_open=open_price,
+                            binance_close=close_price,
+                            resolution=resolution,
+                        )
+                    else:
+                        # Log why resolution failed
+                        print(f"[Resolution] {position.symbol} FAILED: "
+                              f"open_price={open_price}, close_price={close_price}, "
+                              f"candles_count={len(candles)}, key={binance_sym}", flush=True)
+
+        except Exception as e:
+            print(f"[PTLoop] ERROR in iteration {iteration}: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
 
 # ============================================================================
@@ -551,6 +1138,33 @@ async def health_check():
     else:
         status["components"]["live_trading"] = "not_initialized"
 
+    # Check whale detector (polling-based)
+    if whale_detector:
+        status["components"]["whale_detector"] = "healthy" if whale_detector._running else "stopped"
+        status["whale_detector"] = {
+            "running": whale_detector._running,
+            "whales_tracked": whale_detector.whales,
+            "polls_made": whale_detector.polls_made,
+            "trades_detected": whale_detector.trades_detected,
+            "biases_generated": whale_detector.biases_generated,
+        }
+    else:
+        status["components"]["whale_detector"] = "not_initialized"
+
+    # Check WebSocket whale detector (low-latency)
+    if whale_ws_detector:
+        status["components"]["whale_ws_detector"] = "healthy" if whale_ws_detector._running else "stopped"
+        active_markets = whale_ws_detector._active_markets
+        status["whale_ws_detector"] = {
+            "running": whale_ws_detector._running,
+            "target_wallet": "Account88888",
+            "active_markets": list(active_markets.keys()) if active_markets else [],
+            "subscribed_tokens": len(whale_ws_detector.get_token_to_symbol()),
+            "latency_target_ms": "5000-15000",
+        }
+    else:
+        status["components"]["whale_ws_detector"] = "not_initialized"
+
     # WebSocket clients
     status["components"]["websocket_clients"] = len(ws_clients)
 
@@ -599,6 +1213,132 @@ async def get_whale_trades(limit: int = 50):
     if not whale_tracker:
         return {"trades": []}
     return {"trades": whale_tracker.get_recent_trades(limit)}
+
+
+# =============================================================================
+# WHALE FOLLOWING STRATEGY ENDPOINTS
+# =============================================================================
+
+@app.get("/api/whale-following/backtest/{whale_name}")
+async def backtest_whale(whale_name: str, days: int = 7, position_size: float = 25.0):
+    """
+    Backtest the whale following strategy.
+
+    Fetches historical trades from the specified whale on 15-min markets
+    and simulates following their trades.
+
+    Args:
+        whale_name: Name of whale (e.g., "gabagool22")
+        days: Number of days to backtest (default 7)
+        position_size: USD per trade (default $25)
+    """
+    try:
+        result = await backtest_whale_following(
+            whale_name=whale_name,
+            days=days,
+            position_size=position_size,
+        )
+        return result.to_dict()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": f"Backtest failed: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/whale-following/history/{whale_name}")
+async def get_whale_history(whale_name: str, limit: int = 50):
+    """
+    Get a whale's recent 15-min market activity.
+
+    Returns trades grouped by market with position information.
+    """
+    try:
+        markets = await fetch_whale_market_history(whale_name, limit)
+        return {
+            "whale_name": whale_name,
+            "markets_count": len(markets),
+            "markets": markets,
+        }
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/whale-following/positions/{whale_name}")
+async def get_whale_positions_pnl(whale_name: str):
+    """
+    Get a whale's REAL position P&L from Polymarket.
+
+    This fetches actual settled positions and realized P&L rather than
+    simulated outcomes. Much more accurate than the trade-based backtest.
+
+    Returns:
+        Real performance metrics including total P&L, win rate, and ROI
+    """
+    try:
+        result = await fetch_whale_positions_pnl(whale_name)
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to fetch positions: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/whale-following/leaderboard")
+async def get_whale_leaderboard():
+    """
+    Get performance leaderboard for tracked whales.
+
+    Returns stats on which whales to follow based on recent performance.
+    """
+    leaderboard = []
+
+    for name, info in CRYPTO_WHALE_WALLETS.items():
+        try:
+            # Quick backtest for each whale
+            result = await backtest_whale_following(
+                whale_name=name,
+                days=3,  # Last 3 days
+                position_size=25.0,
+            )
+
+            if result.total_trades > 0:
+                leaderboard.append({
+                    "name": name,
+                    "strategy": info.get("strategy", "Unknown"),
+                    "trades": result.total_trades,
+                    "win_rate": result.win_rate,
+                    "roi_pct": result.roi_pct,
+                    "total_pnl": result.total_pnl,
+                })
+        except Exception:
+            continue
+
+    # Sort by ROI
+    leaderboard.sort(key=lambda x: x["roi_pct"], reverse=True)
+
+    return {
+        "period_days": 3,
+        "whales": leaderboard,
+    }
+
+
+@app.get("/api/whale-detector/status")
+async def get_whale_detector_status():
+    """
+    Get real-time whale trade detector status.
+
+    Returns detection stats and active market biases.
+    """
+    if not whale_detector:
+        raise HTTPException(status_code=503, detail="Whale detector not initialized")
+
+    stats = whale_detector.get_stats()
+    active_biases = whale_detector.get_active_biases()
+
+    return {
+        **stats,
+        "active_biases": [b.to_dict() for b in active_biases],
+    }
 
 
 @app.get("/api/candles/{symbol}")
@@ -657,6 +1397,39 @@ async def get_orderbook(symbol: str):
     }
 
 
+@app.get("/api/time-sync")
+async def get_time_sync():
+    """
+    Get time synchronization status.
+
+    Returns current sync state including:
+    - offset_ms: Difference between local and server time
+    - last_sync: When last sync occurred
+    - source: Time source (polymarket, google, etc.)
+    - status: synced, sync_failed, not_synced
+    - drift_ms: Absolute clock drift detected
+    """
+    status = get_sync_status()
+    return {
+        **status,
+        "synced_timestamp": get_synced_timestamp(),
+    }
+
+
+@app.post("/api/time-sync/refresh")
+async def refresh_time_sync():
+    """Force a time sync refresh"""
+    success, msg = await sync_with_polymarket()
+    if not success:
+        success, msg = await sync_with_ntp()
+
+    return {
+        "success": success,
+        "message": msg,
+        **get_sync_status(),
+    }
+
+
 @app.get("/api/markets-15m")
 async def get_markets_15m():
     """Get active 15-minute markets and timing"""
@@ -694,6 +1467,49 @@ async def get_market_trades(symbol: str = None, limit: int = 50):
 
     return {
         "trades": polymarket_feed.get_recent_trades(symbol=symbol.upper() if symbol else None, limit=limit),
+    }
+
+
+@app.get("/api/markets-15m/history")
+async def get_market_history(symbol: str = None, limit: int = 10):
+    """
+    Get historical resolved markets for analysis.
+
+    Returns the last N resolved 15-minute markets with:
+    - BTC/crypto price at open and close
+    - Resolution (UP/DOWN)
+    - Price change percentage
+    - Any signals that were generated
+    - Chart data if available
+
+    Args:
+        symbol: Filter by symbol (BTC, ETH, etc.)
+        limit: Max markets to return (default 10, max 50)
+
+    Example response:
+    {
+      "markets": [
+        {
+          "symbol": "BTC",
+          "market_start": 1704067200,
+          "start_time_str": "2024-01-01 00:00:00",
+          "binance_open": 42500.00,
+          "binance_close": 42520.00,
+          "price_change_pct": 0.047,
+          "resolution": "UP",
+          "signals": [...],
+          "chart_data": {...}
+        }
+      ]
+    }
+    """
+    limit = min(limit, 50)  # Cap at 50
+    markets = get_historical_markets(symbol=symbol, limit=limit)
+
+    return {
+        "markets": markets,
+        "total_stored": len(_historical_markets),
+        "limit_configured": HISTORICAL_MARKET_LIMIT,
     }
 
 
@@ -1009,16 +1825,30 @@ async def reject_pending_order(
 async def get_trades(
     mode: Optional[str] = None,
     symbol: Optional[str] = None,
+    from_date: Optional[int] = None,
+    to_date: Optional[int] = None,
     limit: int = 50,
     offset: int = 0,
 ):
-    """Get recent trades from the ledger"""
+    """
+    Get recent trades from the ledger.
+
+    Args:
+        mode: Filter by "paper" or "live"
+        symbol: Filter by symbol (BTC, ETH, etc.)
+        from_date: Filter trades after this Unix timestamp
+        to_date: Filter trades before this Unix timestamp
+        limit: Max results (default 50)
+        offset: Skip first N results
+    """
     if not trade_ledger:
         return {"error": "Trade ledger not initialized"}
 
     trades = trade_ledger.get_trades(
         mode=mode,
         symbol=symbol,
+        since=from_date,
+        until=to_date,
         limit=limit,
         offset=offset,
     )
@@ -1093,6 +1923,190 @@ async def export_trades_csv(
         filename=f"trades_{mode or 'all'}.csv",
         headers={"X-Trade-Count": str(count)}
     )
+
+
+# ============================================================================
+# ACCOUNT & TRANSACTION ENDPOINTS
+# ============================================================================
+
+class CreateAccountRequest(BaseModel):
+    name: str
+    initial_balance: float = Field(0, ge=0)
+
+
+class TransactionRequest(BaseModel):
+    account: str
+    amount: float = Field(..., gt=0)
+    description: str
+    notes: Optional[str] = None
+
+
+@app.get("/api/accounts")
+async def list_accounts():
+    """List all trading accounts"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+    return {"accounts": trade_ledger.list_accounts()}
+
+
+@app.get("/api/accounts/{name}")
+async def get_account(name: str):
+    """Get account information"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    info = trade_ledger.get_account_info(name)
+    if not info:
+        return JSONResponse({"error": f"Account not found: {name}"}, status_code=404)
+
+    return info
+
+
+@app.post("/api/accounts")
+async def create_account(
+    request: CreateAccountRequest,
+    _: str = Depends(verify_api_key),
+):
+    """Create a new trading account (requires API key)"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    success = trade_ledger.create_account(request.name, request.initial_balance)
+    if not success:
+        return JSONResponse({"error": f"Account already exists: {request.name}"}, status_code=400)
+
+    return {"status": "ok", "account": trade_ledger.get_account_info(request.name)}
+
+
+@app.get("/api/accounts/{name}/pnl")
+async def get_account_pnl(name: str):
+    """Get P&L summary for an account"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    return trade_ledger.get_pnl_summary(name)
+
+
+@app.get("/api/accounts/{name}/transactions")
+async def get_account_transactions(
+    name: str,
+    type: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """
+    Get transactions for an account.
+
+    Args:
+        name: Account name
+        type: Filter by transaction type (trade, credit, debit, fee, adjustment)
+        from_date: Filter transactions after this date (ISO format or Unix timestamp)
+        to_date: Filter transactions before this date (ISO format or Unix timestamp)
+        limit: Max results (default 100)
+        offset: Skip first N results
+
+    Examples:
+        /api/accounts/paper/transactions?from_date=2024-01-01&to_date=2024-01-31
+        /api/accounts/paper/transactions?from_date=1704067200&to_date=1706745600
+    """
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    txs = trade_ledger.get_transactions(
+        account=name,
+        type=type,
+        since=from_date,
+        until=to_date,
+        limit=limit,
+        offset=offset,
+    )
+    return {"transactions": [t.to_dict() for t in txs]}
+
+
+@app.post("/api/accounts/{name}/credit")
+async def credit_account(
+    name: str,
+    request: TransactionRequest,
+    _: str = Depends(verify_api_key),
+):
+    """Credit (deposit) to an account (requires API key)"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    tx = trade_ledger.record_credit(
+        account=name,
+        amount=request.amount,
+        description=request.description,
+        notes=request.notes,
+    )
+
+    if not tx:
+        return JSONResponse({"error": "Failed to record credit"}, status_code=500)
+
+    return {"status": "ok", "transaction": tx.to_dict()}
+
+
+@app.post("/api/accounts/{name}/debit")
+async def debit_account(
+    name: str,
+    request: TransactionRequest,
+    _: str = Depends(verify_api_key),
+):
+    """Debit (withdraw) from an account (requires API key)"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    # Check sufficient balance
+    balance = trade_ledger.get_account_balance(name)
+    if request.amount > balance:
+        return JSONResponse(
+            {"error": f"Insufficient balance: ${balance:.2f} < ${request.amount:.2f}"},
+            status_code=400
+        )
+
+    tx = trade_ledger.record_debit(
+        account=name,
+        amount=request.amount,
+        description=request.description,
+        notes=request.notes,
+    )
+
+    if not tx:
+        return JSONResponse({"error": "Failed to record debit"}, status_code=500)
+
+    return {"status": "ok", "transaction": tx.to_dict()}
+
+
+class AdjustmentRequest(BaseModel):
+    account: str
+    amount: float  # Can be positive or negative
+    description: str
+    notes: Optional[str] = None
+
+
+@app.post("/api/accounts/{name}/adjustment")
+async def adjust_account(
+    name: str,
+    request: AdjustmentRequest,
+    _: str = Depends(verify_api_key),
+):
+    """Record a manual P&L adjustment (requires API key)"""
+    if not trade_ledger:
+        return {"error": "Trade ledger not initialized"}
+
+    tx = trade_ledger.record_adjustment(
+        account=name,
+        amount=request.amount,
+        description=request.description,
+        notes=request.notes,
+    )
+
+    if not tx:
+        return JSONResponse({"error": "Failed to record adjustment"}, status_code=500)
+
+    return {"status": "ok", "transaction": tx.to_dict()}
 
 
 # ============================================================================

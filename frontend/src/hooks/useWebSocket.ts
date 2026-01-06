@@ -11,6 +11,7 @@ import type {
   WhaleInfo,
   Markets15MinData,
   MarketTrade,
+  MarketWindowChartData,
   PaperAccount,
   PaperSignal,
   PaperTradingConfig,
@@ -30,6 +31,7 @@ export interface UseWebSocketReturn {
   symbols: string[];
   markets15m: Markets15MinData | null;
   marketTrades: MarketTrade[];
+  chartData: Record<string, MarketWindowChartData>;
   paperAccount: PaperAccount | null;
   paperSignals: PaperSignal[];
   paperConfig: PaperTradingConfig | null;
@@ -55,6 +57,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [markets15m, setMarkets15m] = useState<Markets15MinData | null>(null);
   const [marketTrades, setMarketTrades] = useState<MarketTrade[]>([]);
+  const [chartData, setChartData] = useState<Record<string, MarketWindowChartData>>({});
   const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null);
   const [paperSignals, setPaperSignals] = useState<PaperSignal[]>([]);
   const [paperConfig, setPaperConfig] = useState<PaperTradingConfig | null>(null);
@@ -119,9 +122,10 @@ export function useWebSocket(): UseWebSocketReturn {
                 [msg.symbol!]: [...current.slice(0, -1), candle],
               };
             }
+            // Limit to 200 candles (reduced from 500 for memory)
             return {
               ...prev,
-              [msg.symbol!]: [...current.slice(-499), candle],
+              [msg.symbol!]: [...current.slice(-199), candle],
             };
           });
         }
@@ -141,9 +145,10 @@ export function useWebSocket(): UseWebSocketReturn {
           const trade = msg.data as TradeData;
           setTrades((prev) => {
             const current = prev[msg.symbol!] || [];
+            // Limit to 50 trades per symbol (reduced from 100 for memory)
             return {
               ...prev,
-              [msg.symbol!]: [...current.slice(-99), trade],
+              [msg.symbol!]: [...current.slice(-49), trade],
             };
           });
         }
@@ -167,7 +172,8 @@ export function useWebSocket(): UseWebSocketReturn {
       case "whale_trade":
         if (msg.data) {
           const trade = msg.data as WhaleTrade;
-          setWhaleTrades((prev) => [trade, ...prev.slice(0, 99)]);
+          // Limit to 50 whale trades (reduced from 100 for memory)
+          setWhaleTrades((prev) => [trade, ...prev.slice(0, 49)]);
         }
         break;
 
@@ -178,13 +184,24 @@ export function useWebSocket(): UseWebSocketReturn {
           if (data.trades) {
             setMarketTrades(data.trades);
           }
+          if (data.chart_data) {
+            setChartData(data.chart_data as Record<string, MarketWindowChartData>);
+          }
         }
         break;
 
       case "market_trade":
         if (msg.data) {
           const trade = msg.data as MarketTrade;
-          setMarketTrades((prev) => [trade, ...prev.slice(0, 99)]);
+          // Limit to 50 market trades (reduced from 100 for memory)
+          setMarketTrades((prev) => [trade, ...prev.slice(0, 49)]);
+        }
+        break;
+
+      case "chart_update":
+        // Fast chart updates (every 1s) for smoother rendering
+        if (msg.data) {
+          setChartData(msg.data as Record<string, MarketWindowChartData>);
         }
         break;
 
@@ -197,7 +214,8 @@ export function useWebSocket(): UseWebSocketReturn {
       case "paper_signal":
         if (msg.data) {
           const signal = msg.data as PaperSignal;
-          setPaperSignals((prev) => [signal, ...prev.slice(0, 49)]);
+          // Limit to 20 paper signals (reduced from 50 for memory)
+          setPaperSignals((prev) => [signal, ...prev.slice(0, 19)]);
         }
         break;
 
@@ -358,6 +376,7 @@ export function useWebSocket(): UseWebSocketReturn {
     symbols,
     markets15m,
     marketTrades,
+    chartData,
     paperAccount,
     paperSignals,
     paperConfig,

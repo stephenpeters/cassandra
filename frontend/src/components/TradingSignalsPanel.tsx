@@ -1,11 +1,12 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  ArrowUpCircle,
-  ArrowDownCircle,
+  ChevronUp,
+  ChevronDown,
+  ChevronRight,
   MinusCircle,
   TrendingUp,
   TrendingDown,
@@ -13,10 +14,21 @@ import {
 } from "lucide-react";
 import type { PaperSignal, MomentumSignal } from "@/types";
 
+// Checkpoint definitions
+const CHECKPOINTS = [
+  { label: "3m", seconds: 180 },
+  { label: "6m", seconds: 360 },
+  { label: "7:30m", seconds: 450 },
+  { label: "9m", seconds: 540 },
+  { label: "12m", seconds: 720 },
+];
+
 interface TradingSignalsPanelProps {
   signals: PaperSignal[];
   momentum: Record<string, MomentumSignal>;
   selectedSymbol: string;
+  marketStart?: number;  // Current market window start timestamp
+  marketEnd?: number;    // Current market window end timestamp
 }
 
 function formatTime(timestamp: number): string {
@@ -31,10 +43,10 @@ function formatTime(timestamp: number): string {
 
 function getSignalIcon(signal: string) {
   if (signal.includes("UP")) {
-    return <ArrowUpCircle className="h-5 w-5 text-green-500" />;
+    return <ChevronUp className="h-5 w-5 text-green-500" />;
   }
   if (signal.includes("DOWN")) {
-    return <ArrowDownCircle className="h-5 w-5 text-red-500" />;
+    return <ChevronDown className="h-5 w-5 text-red-500" />;
   }
   return <MinusCircle className="h-5 w-5 text-zinc-500" />;
 }
@@ -51,33 +63,159 @@ function getSignalBgColor(signal: string) {
   return "bg-zinc-500/10 border-zinc-500/30";
 }
 
+// Format market window time for display
+function formatMarketWindow(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  });
+}
+
+// Generate market slug from timestamp
+function getMarketSlug(symbol: string, timestamp: number): string {
+  return `${symbol.toLowerCase()}-updown-15m-${timestamp}`;
+}
+
 function TradingSignalsPanelComponent({
   signals,
   momentum,
   selectedSymbol,
+  marketStart,
+  marketEnd,
 }: TradingSignalsPanelProps) {
-  // Get latest signal for selected symbol
-  const latestSignal = signals.find((s) => s.symbol === selectedSymbol);
+  // Get latest signal for selected symbol AND current market window only
+  const latestSignal = signals.find((s) =>
+    s.symbol === selectedSymbol &&
+    (!marketStart || (s.timestamp >= marketStart && s.timestamp <= (marketEnd || marketStart + 900)))
+  );
 
   // Get momentum for selected symbol
   const symbolMomentum = momentum[`${selectedSymbol}USDT`];
 
-  // Get all recent signals (last 10)
-  const recentSignals = signals.slice(0, 10);
+  // Get signals for current market only (filter by market window)
+  const currentMarketSignals = marketStart
+    ? signals.filter((s) =>
+        s.symbol === selectedSymbol &&
+        s.timestamp >= marketStart &&
+        s.timestamp <= (marketEnd || marketStart + 900)
+      )
+    : signals.filter((s) => s.symbol === selectedSymbol).slice(0, 10);
+
+  // Market window info for title
+  const marketSlug = marketStart ? getMarketSlug(selectedSymbol, marketStart) : null;
+  const marketWindowStr = marketStart ? formatMarketWindow(marketStart) : null;
+
+  // Calculate checkpoint statuses
+  const checkpointStatuses = useMemo(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const elapsed = marketStart ? now - marketStart : 0;
+
+    return CHECKPOINTS.map((cp) => {
+      // Find signal triggered at this checkpoint
+      const signal = currentMarketSignals.find((s) => {
+        // Match checkpoint label (handle variations like "7m30s" vs "7:30m")
+        const sigCheckpoint = s.checkpoint?.replace(":", "").replace("m", "").replace("s", "");
+        const cpLabel = cp.label.replace(":", "").replace("m", "");
+        return sigCheckpoint === cpLabel ||
+               s.checkpoint === cp.label ||
+               (cp.seconds === 450 && (s.checkpoint === "7m30s" || s.checkpoint === "7:30m"));
+      });
+
+      const isPast = elapsed >= cp.seconds;
+      const isActive = elapsed >= cp.seconds - 30 && elapsed < cp.seconds + 30; // 30s window around checkpoint
+
+      return {
+        ...cp,
+        signal,
+        isPast,
+        isActive,
+        status: signal ? "triggered" : isPast ? "missed" : "pending",
+      };
+    });
+  }, [marketStart, currentMarketSignals]);
 
   return (
     <Card className="bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-1">
           <CardTitle className="text-lg text-zinc-800 dark:text-zinc-200">
             Trading Signals
           </CardTitle>
-          <Badge className="bg-blue-500/20 text-blue-400 text-xs">
-            Checkpoints: 3m, 7m, 10m, 12.5m
-          </Badge>
+          {/* Market window identifier */}
+          {marketSlug && marketWindowStr && (
+            <div className="text-xs text-zinc-500 font-mono">
+              {marketSlug} @ {marketWindowStr}
+            </div>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Checkpoint Timeline */}
+        <div className="p-3 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg">
+          <div className="text-xs text-zinc-500 mb-3">Checkpoint Status</div>
+          <div className="flex items-center justify-between gap-1">
+            {checkpointStatuses.map((cp) => (
+              <div key={cp.label} className="flex flex-col items-center flex-1">
+                {/* Checkpoint indicator - triangular chevrons in circles */}
+                <div className="mb-1">
+                  {cp.status === "triggered" ? (
+                    // Show UP/DOWN/HOLD chevron based on signal
+                    cp.signal?.signal.includes("UP") ? (
+                      <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center">
+                        <ChevronUp className="w-6 h-6 text-green-500" strokeWidth={3} />
+                      </div>
+                    ) : cp.signal?.signal.includes("DOWN") ? (
+                      <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center">
+                        <ChevronDown className="w-6 h-6 text-red-500" strokeWidth={3} />
+                      </div>
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-zinc-500/20 flex items-center justify-center">
+                        <ChevronRight className="w-6 h-6 text-zinc-400" strokeWidth={3} />
+                      </div>
+                    )
+                  ) : cp.isPast ? (
+                    // Checkpoint passed but no signal (missed) - grey right chevron
+                    <div className="w-8 h-8 rounded-full bg-zinc-500/10 flex items-center justify-center">
+                      <ChevronRight className="w-6 h-6 text-zinc-400" strokeWidth={3} />
+                    </div>
+                  ) : (
+                    // Waiting for checkpoint - clock icon
+                    <Clock className={`w-8 h-8 ${cp.isActive ? "text-blue-500 animate-pulse" : "text-zinc-300 dark:text-zinc-600"}`} />
+                  )}
+                </div>
+                {/* Label */}
+                <div className={`text-[10px] font-mono ${
+                  cp.status === "triggered"
+                    ? cp.signal?.signal.includes("UP")
+                      ? "text-green-500 font-semibold"
+                      : cp.signal?.signal.includes("DOWN")
+                      ? "text-red-500 font-semibold"
+                      : "text-zinc-500"
+                    : cp.isActive
+                    ? "text-blue-500 font-semibold"
+                    : "text-zinc-400"
+                }`}>
+                  {cp.label}
+                </div>
+                {/* Edge badge if triggered with signal */}
+                {cp.signal && (
+                  <div className={`mt-0.5 text-[10px] font-mono font-semibold ${
+                    cp.signal.signal.includes("UP")
+                      ? "text-green-500"
+                      : cp.signal.signal.includes("DOWN")
+                      ? "text-red-500"
+                      : "text-zinc-500"
+                  }`}>
+                    {(cp.signal.edge * 100).toFixed(0)}%
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
         {/* Current Signal for Selected Symbol */}
         {latestSignal ? (
           <div
@@ -207,24 +345,16 @@ function TradingSignalsPanelComponent({
               </div>
             )}
           </div>
-        ) : (
-          <div className="p-4 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg text-center">
-            <Clock className="h-8 w-8 text-zinc-400 mx-auto mb-2" />
-            <div className="text-zinc-500 text-sm">
-              Waiting for next checkpoint signal...
-            </div>
-            <div className="text-xs text-zinc-400 mt-1">
-              Signals are generated at 3m, 7m, 10m, and 12.5m into each market
-            </div>
-          </div>
-        )}
+        ) : null}
 
-        {/* Signal History */}
-        {recentSignals.length > 0 && (
+        {/* Signal History - Current Market Only */}
+        {currentMarketSignals.length > 0 && (
           <div>
-            <div className="text-xs text-zinc-500 mb-2">Recent Signals</div>
+            <div className="text-xs text-zinc-500 mb-2">
+              Signals This Market ({currentMarketSignals.length})
+            </div>
             <div className="space-y-1 max-h-48 overflow-y-auto">
-              {recentSignals.map((sig, i) => (
+              {currentMarketSignals.map((sig, i) => (
                 <div
                   key={`${sig.symbol}-${sig.timestamp}-${i}`}
                   className={`flex items-center justify-between p-2 rounded text-sm ${
@@ -267,66 +397,6 @@ function TradingSignalsPanelComponent({
           </div>
         )}
 
-        {/* Current Momentum Overview */}
-        {symbolMomentum && (
-          <div className="p-3 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-zinc-500">
-                Live {selectedSymbol} Momentum
-              </span>
-              <Badge
-                className={`text-xs ${
-                  symbolMomentum.direction === "UP"
-                    ? "bg-green-500/20 text-green-400"
-                    : symbolMomentum.direction === "DOWN"
-                    ? "bg-red-500/20 text-red-400"
-                    : "bg-zinc-600/20 text-zinc-400"
-                }`}
-              >
-                {symbolMomentum.direction}
-              </Badge>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div>
-                <span className="text-zinc-500">Vol Delta: </span>
-                <span
-                  className={`font-mono ${
-                    symbolMomentum.volume_delta > 0
-                      ? "text-green-500"
-                      : "text-red-500"
-                  }`}
-                >
-                  ${(symbolMomentum.volume_delta / 1000).toFixed(0)}K
-                </span>
-              </div>
-              <div>
-                <span className="text-zinc-500">Price: </span>
-                <span
-                  className={`font-mono ${
-                    symbolMomentum.price_change_pct > 0
-                      ? "text-green-500"
-                      : "text-red-500"
-                  }`}
-                >
-                  {symbolMomentum.price_change_pct > 0 ? "+" : ""}
-                  {symbolMomentum.price_change_pct.toFixed(3)}%
-                </span>
-              </div>
-              <div>
-                <span className="text-zinc-500">Book: </span>
-                <span
-                  className={`font-mono ${
-                    symbolMomentum.orderbook_imbalance > 0
-                      ? "text-green-500"
-                      : "text-red-500"
-                  }`}
-                >
-                  {(symbolMomentum.orderbook_imbalance * 100).toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
   );

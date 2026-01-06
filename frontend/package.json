@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:prod": "NEXT_PUBLIC_WS_URL=wss://$DOMAIN/ws NEXT_PUBLIC_API_URL=https://$DOMAIN next build",
     "start": "next start",
     "lint": "eslint"
   },
@@ -19,6 +20,7 @@
     "next": "16.1.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "recharts": "^3.6.0",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {

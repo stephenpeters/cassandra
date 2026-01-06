@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -12,6 +12,7 @@ import {
   Settings,
   RotateCcw,
   AlertTriangle,
+  Clock,
 } from "lucide-react";
 import type { PaperAccount, PaperSignal, PaperTradingConfig } from "@/types";
 
@@ -47,6 +48,19 @@ function formatTime(timestamp: number): string {
   });
 }
 
+function formatUptime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${secs}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
 function PaperTradingCardComponent({
   account,
   signals,
@@ -56,6 +70,16 @@ function PaperTradingCardComponent({
   onConfigUpdate,
 }: PaperTradingCardProps) {
   const [showSettings, setShowSettings] = useState(false);
+  const [uptime, setUptime] = useState(0);
+  const startTimeRef = useRef<number>(Date.now());
+
+  // Track uptime since component mount (proxy for session start)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setUptime(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   if (!account) {
     return (
@@ -75,16 +99,24 @@ function PaperTradingCardComponent({
     <Card className="bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CardTitle className="text-lg text-zinc-800 dark:text-zinc-200">
-              Paper Trading
-            </CardTitle>
-            {account.trading_halted && (
-              <Badge className="bg-red-500/20 text-red-500">
-                <AlertTriangle className="h-3 w-3 mr-1" />
-                Halted
-              </Badge>
-            )}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-lg text-zinc-800 dark:text-zinc-200">
+                Paper Trading
+              </CardTitle>
+              {account.trading_halted && (
+                <Badge className="bg-red-500/20 text-red-500">
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  Halted
+                </Badge>
+              )}
+            </div>
+            {/* Uptime display */}
+            <div className="flex items-center gap-1 text-xs text-zinc-500">
+              <Clock className="h-3 w-3" />
+              <span className="font-mono">{formatUptime(uptime)}</span>
+              <span className="text-zinc-400">running</span>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -177,28 +209,35 @@ function PaperTradingCardComponent({
               {account.positions.map((pos) => (
                 <div
                   key={pos.id}
-                  className="flex items-center justify-between p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded text-sm"
+                  className="flex flex-col p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded text-sm"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                      {pos.symbol}
-                    </span>
-                    <Badge
-                      className={`text-[10px] ${
-                        pos.side === "UP"
-                          ? "bg-green-500/20 text-green-500"
-                          : "bg-red-500/20 text-red-500"
-                      }`}
-                    >
-                      {pos.side}
-                    </Badge>
-                    <span className="text-xs text-zinc-500">@ {pos.checkpoint}</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {pos.symbol}
+                      </span>
+                      <Badge
+                        className={`text-[10px] ${
+                          pos.side === "UP"
+                            ? "bg-green-500/20 text-green-500"
+                            : "bg-red-500/20 text-red-500"
+                        }`}
+                      >
+                        {pos.side}
+                      </Badge>
+                      <span className="text-xs text-zinc-500">@ {pos.checkpoint}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-mono text-zinc-600 dark:text-zinc-400">
+                        {formatCurrency(pos.cost_basis)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="font-mono text-zinc-600 dark:text-zinc-400">
-                      {formatCurrency(pos.cost_basis)}
-                    </span>
-                  </div>
+                  {pos.slug && (
+                    <div className="mt-1 text-[10px] font-mono text-zinc-400 truncate">
+                      {pos.slug}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -213,31 +252,38 @@ function PaperTradingCardComponent({
               {signals.slice(0, 5).map((sig, i) => (
                 <div
                   key={`${sig.symbol}-${sig.timestamp}-${i}`}
-                  className="flex items-center justify-between p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded text-xs"
+                  className="flex flex-col p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded text-xs"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                      {sig.symbol}
-                    </span>
-                    <span className="text-zinc-500">@ {sig.checkpoint}</span>
-                    <Badge
-                      className={`text-[10px] ${
-                        sig.signal === "HOLD"
-                          ? "bg-zinc-500/20 text-zinc-500"
-                          : sig.signal.includes("UP")
-                          ? "bg-green-500/20 text-green-500"
-                          : "bg-red-500/20 text-red-500"
-                      }`}
-                    >
-                      {sig.signal}
-                    </Badge>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {sig.symbol}
+                      </span>
+                      <span className="text-zinc-500">@ {sig.checkpoint}</span>
+                      <Badge
+                        className={`text-[10px] ${
+                          sig.signal === "HOLD"
+                            ? "bg-zinc-500/20 text-zinc-500"
+                            : sig.signal.includes("UP")
+                            ? "bg-green-500/20 text-green-500"
+                            : "bg-red-500/20 text-red-500"
+                        }`}
+                      >
+                        {sig.signal}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-500">
+                        Edge: {(sig.edge * 100).toFixed(1)}%
+                      </span>
+                      <span className="text-zinc-400">{formatTime(sig.timestamp)}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-zinc-500">
-                      Edge: {(sig.edge * 100).toFixed(1)}%
-                    </span>
-                    <span className="text-zinc-400">{formatTime(sig.timestamp)}</span>
-                  </div>
+                  {sig.slug && (
+                    <div className="mt-1 text-[10px] font-mono text-zinc-400 truncate">
+                      {sig.slug}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -252,35 +298,42 @@ function PaperTradingCardComponent({
               {account.recent_trades.slice(0, 5).map((trade) => (
                 <div
                   key={trade.id}
-                  className="flex items-center justify-between p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded text-xs"
+                  className="flex flex-col p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded text-xs"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                      {trade.symbol}
-                    </span>
-                    <Badge
-                      className={`text-[10px] ${
-                        trade.side === "UP"
-                          ? "bg-green-500/20 text-green-500"
-                          : "bg-red-500/20 text-red-500"
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {trade.symbol}
+                      </span>
+                      <Badge
+                        className={`text-[10px] ${
+                          trade.side === "UP"
+                            ? "bg-green-500/20 text-green-500"
+                            : "bg-red-500/20 text-red-500"
+                        }`}
+                      >
+                        {trade.side}
+                      </Badge>
+                      <span className="text-zinc-500">
+                        {trade.resolution === trade.side ? "WIN" : "LOSS"}
+                      </span>
+                    </div>
+                    <div
+                      className={`font-mono ${
+                        trade.pnl >= 0
+                          ? "text-green-600 dark:text-green-400"
+                          : "text-red-600 dark:text-red-400"
                       }`}
                     >
-                      {trade.side}
-                    </Badge>
-                    <span className="text-zinc-500">
-                      {trade.resolution === trade.side ? "WIN" : "LOSS"}
-                    </span>
+                      {trade.pnl >= 0 ? "+" : ""}
+                      {formatCurrency(trade.pnl)}
+                    </div>
                   </div>
-                  <div
-                    className={`font-mono ${
-                      trade.pnl >= 0
-                        ? "text-green-600 dark:text-green-400"
-                        : "text-red-600 dark:text-red-400"
-                    }`}
-                  >
-                    {trade.pnl >= 0 ? "+" : ""}
-                    {formatCurrency(trade.pnl)}
-                  </div>
+                  {trade.slug && (
+                    <div className="mt-1 text-[10px] font-mono text-zinc-400 truncate">
+                      {trade.slug}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

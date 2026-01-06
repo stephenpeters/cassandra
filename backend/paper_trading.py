@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 class PaperTradingConfig:
     """Paper trading configuration"""
     enabled: bool = True
-    starting_balance: float = 10000.0
+    starting_balance: float = 1000.0
     slippage_pct: float = 0.5  # 0.5% slippage
     commission_pct: float = 0.1  # 0.1% commission
     max_position_pct: float = 2.0  # Max 2% of account per position
@@ -47,6 +47,16 @@ class PaperTradingConfig:
     min_edge_pct: float = 5.0  # Minimum edge to trigger (5%)
     min_time_remaining_sec: int = 120  # Don't trade in last 2 minutes
     cooldown_sec: int = 30  # Seconds between trades per symbol
+
+    # Checkpoint configuration (seconds into 15-min window)
+    # Checkpoints: 3m=180, 6m=360, 7:30m=450, 9m=540, 12m=720
+    # 7:30m (450s) is the default entry point, 9m (540s) has best historical EV
+    signal_checkpoints: list = field(default_factory=lambda: [180, 360, 450, 540, 720])  # seconds
+    active_checkpoint: int = 450  # Which checkpoint to actually execute trades at (7m30s default)
+
+    # Legacy entry timing (kept for backwards compatibility)
+    entry_time_up_sec: int = 450  # When to consider UP entries
+    entry_time_down_sec: int = 450  # When to consider DOWN entries
 
     # Confirmation requirements (momentum must align with price move)
     require_volume_confirmation: bool = True  # Volume delta must support direction
@@ -94,10 +104,14 @@ class CheckpointSignal:
     edge: float  # fair_value - market_price
     confidence: float  # 0-1
     momentum: dict  # Raw momentum data
+    market_start: int = 0  # Market window start timestamp
 
     def to_dict(self) -> dict:
+        # Generate slug from symbol and market_start
+        slug = f"{self.symbol.lower()}-updown-15m-{self.market_start}" if self.market_start else ""
         return {
             "symbol": self.symbol,
+            "slug": slug,
             "checkpoint": self.checkpoint,
             "timestamp": self.timestamp,
             "signal": self.signal.value,
@@ -160,9 +174,11 @@ class PaperPosition:
         return 0.0
 
     def to_dict(self) -> dict:
+        slug = f"{self.symbol.lower()}-updown-15m-{self.market_start}"
         return {
             "id": self.id,
             "symbol": self.symbol,
+            "slug": slug,
             "side": self.side,
             "entry_price": round(self.entry_price, 4),
             "size": round(self.size, 2),
@@ -198,9 +214,11 @@ class PaperTrade:
     signal_confidence: float
 
     def to_dict(self) -> dict:
+        slug = f"{self.symbol.lower()}-updown-15m-{self.market_start}"
         return {
             "id": self.id,
             "symbol": self.symbol,
+            "slug": slug,
             "side": self.side,
             "entry_price": round(self.entry_price, 4),
             "exit_price": round(self.exit_price, 4),
@@ -318,20 +336,23 @@ class PaperTradingEngine:
     - Persistence
     """
 
-    # Checkpoint times in seconds from market start (legacy, kept for compatibility)
+    # Checkpoint times in seconds from market start
+    # User-specified: 3m, 6m, 7:30m, 9m, 12m
     CHECKPOINTS = {
         "3m": 180,
-        "7m": 420,
-        "10m": 600,
-        "12.5m": 750,
+        "6m": 360,
+        "7:30m": 450,
+        "9m": 540,
+        "12m": 720,
     }
 
     # Confidence thresholds for each checkpoint (later = higher)
     CONFIDENCE_THRESHOLDS = {
         "3m": 0.55,
-        "7m": 0.60,
-        "10m": 0.65,
-        "12.5m": 0.70,
+        "6m": 0.58,
+        "7:30m": 0.62,
+        "9m": 0.68,
+        "12m": 0.75,
     }
 
     def __init__(self, data_dir: str = ".", ledger: Optional["TradeLedger"] = None):
@@ -353,6 +374,10 @@ class PaperTradingEngine:
 
         # Track Binance open prices for each active window
         self._binance_opens: dict[str, float] = {}  # "SYMBOL_market_start" -> open price
+
+        # Track which checkpoints have been triggered for each market window
+        # Key: "SYMBOL_market_start", Value: set of checkpoint seconds that have fired
+        self._triggered_checkpoints: dict[str, set[int]] = {}
 
         # Callbacks
         self.on_signal: Optional[Callable[[CheckpointSignal], None]] = None
@@ -410,6 +435,7 @@ class PaperTradingEngine:
         momentum: dict,
         market_price: float,
         has_existing_position: bool,
+        market_start: int = 0,
     ) -> CheckpointSignal:
         """
         Generate trading signal for a checkpoint.
@@ -420,6 +446,7 @@ class PaperTradingEngine:
             momentum: Momentum data from MomentumCalculator
             market_price: Current Polymarket price for UP outcome
             has_existing_position: Whether we already have a position
+            market_start: Unix timestamp when the 15-min window started
         """
         fair_value = self.calculate_fair_value(momentum)
         edge = fair_value - market_price
@@ -462,6 +489,7 @@ class PaperTradingEngine:
             edge=edge,
             confidence=confidence,
             momentum=momentum,
+            market_start=market_start,
         )
 
         # Track recent signals
@@ -512,6 +540,7 @@ class PaperTradingEngine:
             momentum=momentum,
             market_price=market_price,
             has_existing_position=has_position,
+            market_start=market_start,
         )
 
         # Execute based on signal
@@ -537,6 +566,16 @@ class PaperTradingEngine:
         """
         key = f"{symbol}_{market_start}"
         self._binance_opens[key] = binance_price
+
+        # Clean up old checkpoint tracking data (windows older than 1 hour)
+        cutoff = int(time.time()) - 3600
+        old_keys = [k for k in self._triggered_checkpoints.keys() if int(k.split("_")[1]) < cutoff]
+        for k in old_keys:
+            del self._triggered_checkpoints[k]
+
+        old_opens = [k for k in self._binance_opens.keys() if int(k.split("_")[1]) < cutoff]
+        for k in old_opens:
+            del self._binance_opens[k]
 
     def calculate_implied_probability(self, price_change_pct: float, time_remaining_sec: int) -> float:
         """
@@ -673,15 +712,57 @@ class PaperTradingEngine:
             return None
 
         now = int(time.time())
+        elapsed_sec = now - market_start
         time_remaining = market_end - now
 
         # Don't trade in the last min_time_remaining seconds
         if time_remaining < self.config.min_time_remaining_sec:
             return None
 
+        # =====================================================================
+        # CHECKPOINT-BASED SIGNAL GENERATION
+        # Only generate signals at configured checkpoint times (±3 second tolerance)
+        # =====================================================================
+        window_key = f"{symbol}_{market_start}"
+        if window_key not in self._triggered_checkpoints:
+            self._triggered_checkpoints[window_key] = set()
+
+        # Find if we're at a checkpoint (within 3 second tolerance)
+        current_checkpoint = None
+        checkpoint_tolerance = 3  # seconds
+        for checkpoint_sec in self.config.signal_checkpoints:
+            if abs(elapsed_sec - checkpoint_sec) <= checkpoint_tolerance:
+                # Check if this checkpoint hasn't been triggered yet
+                if checkpoint_sec not in self._triggered_checkpoints[window_key]:
+                    current_checkpoint = checkpoint_sec
+                    break
+
+        # If not at a checkpoint, don't generate signal
+        if current_checkpoint is None:
+            # Debug: Log every 30s what elapsed time is
+            if elapsed_sec % 30 < 2:
+                print(f"[PT] {symbol} elapsed={elapsed_sec}s, checkpoints={self.config.signal_checkpoints}", flush=True)
+            return None
+
+        print(f"[PT] {symbol} HIT CHECKPOINT {current_checkpoint}s at elapsed={elapsed_sec}s", flush=True)
+
+        # Mark this checkpoint as triggered
+        self._triggered_checkpoints[window_key].add(current_checkpoint)
+
+        # Format checkpoint string for display
+        cp_min = current_checkpoint // 60
+        cp_sec = current_checkpoint % 60
+        if cp_sec == 30:
+            checkpoint_str = f"{cp_min}m30s"
+        elif cp_sec > 0:
+            checkpoint_str = f"{cp_min}m{cp_sec}s"
+        else:
+            checkpoint_str = f"{cp_min}m"
+
         # Check cooldown
         last_trade = self._last_trade_time.get(symbol, 0)
         if now - last_trade < self.config.cooldown_sec:
+            print(f"[PT] {symbol} checkpoint {checkpoint_str}: COOLDOWN (last trade {now - last_trade}s ago)", flush=True)
             return None
 
         # Check if we already have a position for this window
@@ -690,6 +771,7 @@ class PaperTradingEngine:
             for p in self.account.positions
         )
         if has_position:
+            print(f"[PT] {symbol} checkpoint {checkpoint_str}: ALREADY HAS POSITION", flush=True)
             return None
 
         # Check for latency opportunity
@@ -702,6 +784,7 @@ class PaperTradingEngine:
         )
 
         if gap is None:
+            print(f"[PT] {symbol} checkpoint {checkpoint_str}: NO LATENCY GAP", flush=True)
             return None
 
         # Check if edge is sufficient
@@ -709,6 +792,7 @@ class PaperTradingEngine:
         abs_edge = abs(gap.edge)
 
         if abs_edge < min_edge:
+            print(f"[PT] {symbol} checkpoint {checkpoint_str}: EDGE TOO SMALL ({abs_edge:.1%} < {min_edge:.1%})", flush=True)
             return None
 
         # Determine intended direction from price gap
@@ -728,10 +812,12 @@ class PaperTradingEngine:
             if price_direction == "UP":
                 # Need positive volume delta (more buying pressure)
                 if volume_delta < self.config.min_volume_delta_usd:
+                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: VOLUME REJECT (need +${self.config.min_volume_delta_usd/1000:.0f}K, got ${volume_delta/1000:.1f}K) | Edge {abs_edge:.1%}", flush=True)
                     return None  # Not enough buying conviction
             else:
                 # Need negative volume delta (more selling pressure)
                 if volume_delta > -self.config.min_volume_delta_usd:
+                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: VOLUME REJECT (need -${self.config.min_volume_delta_usd/1000:.0f}K, got ${volume_delta/1000:.1f}K) | Edge {abs_edge:.1%}", flush=True)
                     return None  # Not enough selling conviction
 
         # Check order book confirmation
@@ -740,10 +826,12 @@ class PaperTradingEngine:
             if price_direction == "UP":
                 # Need positive imbalance (more bids than asks)
                 if orderbook_imbalance < self.config.min_orderbook_imbalance:
+                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: ORDERBOOK REJECT (need +{self.config.min_orderbook_imbalance:.0%} imbalance, got {orderbook_imbalance:.1%}) | Edge {abs_edge:.1%}", flush=True)
                     return None  # Order book doesn't support upward move
             else:
                 # Need negative imbalance (more asks than bids)
                 if orderbook_imbalance > -self.config.min_orderbook_imbalance:
+                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: ORDERBOOK REJECT (need -{self.config.min_orderbook_imbalance:.0%} imbalance, got {orderbook_imbalance:.1%}) | Edge {abs_edge:.1%}", flush=True)
                     return None  # Order book doesn't support downward move
 
         # =====================================================================
@@ -781,6 +869,7 @@ class PaperTradingEngine:
             "binance_current": gap.binance_current,
             "time_remaining": gap.time_remaining_sec,
             "confirmed_by": [],
+            "checkpoint_sec": current_checkpoint,  # Include checkpoint in seconds for chart mapping
         }
 
         # Track what confirmed the signal
@@ -791,7 +880,7 @@ class PaperTradingEngine:
 
         signal = CheckpointSignal(
             symbol=symbol,
-            checkpoint="latency",
+            checkpoint=checkpoint_str,
             timestamp=now,
             signal=signal_type,
             fair_value=gap.implied_up_prob,
@@ -799,6 +888,7 @@ class PaperTradingEngine:
             edge=gap.edge,
             confidence=confidence,
             momentum=gap_momentum,
+            market_start=market_start,
         )
 
         # Track signal
@@ -806,15 +896,18 @@ class PaperTradingEngine:
         if len(self.recent_signals) > 100:
             self.recent_signals = self.recent_signals[-100:]
 
-        # Execute the trade
-        self._open_position(symbol, side, entry_price, market_start, market_end, "latency", confidence)
-
-        # Update cooldown
-        self._last_trade_time[symbol] = now
-
-        # Fire callback
+        # Fire callback (always, for UI display)
         if self.on_signal:
             self.on_signal(signal)
+
+        # Only execute trades at the active checkpoint
+        is_active_checkpoint = current_checkpoint == self.config.active_checkpoint
+        if is_active_checkpoint:
+            self._open_position(symbol, side, entry_price, market_start, market_end, checkpoint_str, confidence)
+            self._last_trade_time[symbol] = now
+            print(f"[Signal] {symbol} @ {checkpoint_str}: EXECUTED {side} trade | Edge: {gap.edge:.1%}", flush=True)
+        else:
+            print(f"[Signal] {symbol} @ {checkpoint_str}: {signal_type.value} (signal only) | Edge: {gap.edge:.1%}", flush=True)
 
         return signal
 
@@ -856,8 +949,13 @@ class PaperTradingEngine:
         self.config.enabled_assets = [a.upper() for a in assets]
         self._save_state()
 
-    def _apply_slippage_and_commission(self, price: float, size: float, is_buy: bool) -> tuple[float, float]:
-        """Apply slippage and commission to trade"""
+    def _apply_slippage_and_commission(self, price: float, size: float, is_buy: bool) -> tuple[float, float, float]:
+        """
+        Apply slippage and commission to trade.
+
+        Returns:
+            Tuple of (adjusted_price, total_cost, commission)
+        """
         slippage_mult = 1 + (self.config.slippage_pct / 100) if is_buy else 1 - (self.config.slippage_pct / 100)
         adjusted_price = price * slippage_mult
 
@@ -865,7 +963,7 @@ class PaperTradingEngine:
         commission = size * adjusted_price * (self.config.commission_pct / 100)
         total_cost = size * adjusted_price + commission
 
-        return adjusted_price, total_cost
+        return adjusted_price, total_cost, commission
 
     def _open_position(
         self,
@@ -881,14 +979,16 @@ class PaperTradingEngine:
         position_value = self._calculate_position_size(is_adding=False)
         size = position_value / price  # Number of contracts
 
-        adjusted_price, cost_basis = self._apply_slippage_and_commission(price, size, is_buy=True)
+        adjusted_price, cost_basis, commission = self._apply_slippage_and_commission(price, size, is_buy=True)
 
         # Check if we have enough balance
         if cost_basis > self.account.balance:
             return
 
+        position_id = f"{symbol}_{market_start}_{int(time.time())}"
+
         position = PaperPosition(
-            id=f"{symbol}_{market_start}_{int(time.time())}",
+            id=position_id,
             symbol=symbol,
             side=side,
             entry_price=adjusted_price,
@@ -903,6 +1003,19 @@ class PaperTradingEngine:
         # Deduct from balance
         self.account.balance -= cost_basis
         self.account.positions.append(position)
+
+        # Record commission fee to ledger
+        if self.ledger and commission > 0:
+            try:
+                self.ledger.record_fee(
+                    account="paper",
+                    amount=commission,
+                    description=f"Entry commission: {symbol} {side} @ {adjusted_price:.4f}",
+                    reference_id=position_id,
+                    notes=f"Checkpoint: {checkpoint}, Commission rate: {self.config.commission_pct}%",
+                )
+            except Exception as e:
+                print(f"[PaperTrading] Failed to record fee to ledger: {e}")
 
         # Ensure market window is tracked
         window_key = f"{symbol}_{market_start}"
@@ -943,7 +1056,7 @@ class PaperTradingEngine:
         position_value = self._calculate_position_size(is_adding=True)
         size = position_value / price
 
-        adjusted_price, additional_cost = self._apply_slippage_and_commission(price, size, is_buy=True)
+        adjusted_price, additional_cost, commission = self._apply_slippage_and_commission(price, size, is_buy=True)
 
         # Check balance
         if additional_cost > self.account.balance:
@@ -957,6 +1070,19 @@ class PaperTradingEngine:
 
         # Deduct from balance
         self.account.balance -= additional_cost
+
+        # Record commission fee to ledger
+        if self.ledger and commission > 0:
+            try:
+                self.ledger.record_fee(
+                    account="paper",
+                    amount=commission,
+                    description=f"Add-on commission: {symbol} {side} @ {adjusted_price:.4f}",
+                    reference_id=existing.id,
+                    notes=f"Checkpoint: {checkpoint}, Commission rate: {self.config.commission_pct}%",
+                )
+            except Exception as e:
+                print(f"[PaperTrading] Failed to record fee to ledger: {e}")
 
         # Save state
         self._save_state()
@@ -1053,6 +1179,14 @@ class PaperTradingEngine:
                         from trade_ledger import create_trade_record_from_paper
                         trade_record = create_trade_record_from_paper(trade)
                         self.ledger.record_trade(trade_record)
+
+                        # Also record P&L as a transaction for account tracking
+                        self.ledger.record_trade_pnl(
+                            account="paper",
+                            trade_id=trade.id,
+                            pnl=pnl,
+                            description=f"Trade P&L: {symbol} {position.side} {'WIN' if is_correct else 'LOSS'}",
+                        )
                     except Exception as e:
                         print(f"[PaperTrading] Failed to record trade to ledger: {e}")
 
@@ -1168,7 +1302,9 @@ class PaperTradingEngine:
 
             # Load config
             if "config" in state:
+                print(f"[PT] Loading config from state: signal_checkpoints={state['config'].get('signal_checkpoints')}", flush=True)
                 self.config = PaperTradingConfig.from_dict(state["config"])
+                print(f"[PT] Loaded config: signal_checkpoints={self.config.signal_checkpoints}", flush=True)
 
             # Load account
             if "account" in state:
@@ -1251,3 +1387,137 @@ class PaperTradingEngine:
     def get_positions(self) -> list[dict]:
         """Get open positions"""
         return [p.to_dict() for p in self.account.positions]
+
+    # -------------------------------------------------------------------------
+    # WHALE FOLLOWING
+    # -------------------------------------------------------------------------
+
+    def process_whale_bias(
+        self,
+        whale_name: str,
+        symbol: str,
+        bias: str,  # "UP" or "DOWN"
+        bias_confidence: float,
+        market_start: int,
+        market_end: int,
+        detection_latency_sec: float,
+        polymarket_price: float,  # Current UP price
+    ) -> Optional[CheckpointSignal]:
+        """
+        Process a whale bias signal and potentially open a position.
+
+        Called when WhaleTradeDetector detects that a whale (e.g., gabagool22)
+        has taken a directional position in a market.
+
+        Args:
+            whale_name: Name of the whale (e.g., "gabagool22")
+            symbol: Crypto symbol (BTC, ETH, etc.)
+            bias: Detected bias - "UP" or "DOWN"
+            bias_confidence: How confident we are in the bias (0-1)
+            market_start: Market window start timestamp
+            market_end: Market window end timestamp
+            detection_latency_sec: How long after whale's first trade we detected
+            polymarket_price: Current Polymarket UP price
+
+        Returns:
+            Signal if position opened, None otherwise
+        """
+        if not self.config.enabled:
+            return None
+
+        if self.account.trading_halted:
+            return None
+
+        # Check if this asset is enabled
+        if not self.is_asset_enabled(symbol):
+            return None
+
+        now = int(time.time())
+        time_remaining = market_end - now
+
+        # Need sufficient time remaining (at least 3 minutes)
+        if time_remaining < 180:
+            return None
+
+        # Don't follow if detection latency is too high (stale signal)
+        max_latency = 120  # 2 minutes max
+        if detection_latency_sec > max_latency:
+            print(f"[WhaleFollow] Skipping {symbol} - latency too high: {detection_latency_sec:.0f}s > {max_latency}s")
+            return None
+
+        # Check if we already have a position for this window
+        has_position = any(
+            p.symbol == symbol and p.market_start == market_start
+            for p in self.account.positions
+        )
+        if has_position:
+            return None
+
+        # Require minimum confidence
+        min_confidence = 0.55
+        if bias_confidence < min_confidence:
+            print(f"[WhaleFollow] Skipping {symbol} - confidence too low: {bias_confidence:.1%} < {min_confidence:.1%}")
+            return None
+
+        # Calculate entry price
+        if bias == "UP":
+            entry_price = polymarket_price
+            side = "UP"
+            signal_type = SignalType.BUY_UP
+        else:
+            entry_price = 1 - polymarket_price
+            side = "DOWN"
+            signal_type = SignalType.BUY_DOWN
+
+        # Create checkpoint string for tracking
+        checkpoint_str = f"whale:{whale_name}"
+
+        # Build momentum dict for signal
+        momentum = {
+            "direction": bias,
+            "confidence": bias_confidence,
+            "whale_name": whale_name,
+            "detection_latency_sec": detection_latency_sec,
+            "time_remaining": time_remaining,
+            "strategy": "whale_following",
+        }
+
+        signal = CheckpointSignal(
+            symbol=symbol,
+            checkpoint=checkpoint_str,
+            timestamp=now,
+            signal=signal_type,
+            fair_value=bias_confidence,  # Use confidence as proxy for fair value
+            market_price=polymarket_price,
+            edge=bias_confidence - 0.5,  # Edge relative to 50/50
+            confidence=bias_confidence,
+            momentum=momentum,
+            market_start=market_start,
+        )
+
+        # Track signal
+        self.recent_signals.append(signal)
+        if len(self.recent_signals) > 100:
+            self.recent_signals = self.recent_signals[-100:]
+
+        # Fire callback
+        if self.on_signal:
+            self.on_signal(signal)
+
+        # Open position
+        self._open_position(
+            symbol=symbol,
+            side=side,
+            price=entry_price,
+            market_start=market_start,
+            market_end=market_end,
+            checkpoint=checkpoint_str,
+            confidence=bias_confidence,
+        )
+
+        print(
+            f"[WhaleFollow] EXECUTED: Follow {whale_name} -> {side} on {symbol} "
+            f"(conf={bias_confidence:.1%}, latency={detection_latency_sec:.0f}s, remaining={time_remaining}s)"
+        )
+
+        return signal

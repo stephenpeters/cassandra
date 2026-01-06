@@ -3,12 +3,14 @@
 import { memo, useMemo, useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { Markets15MinData, MomentumSignal, MarketTrade } from "@/types";
+import { MarketWindowChart } from "@/components/charts/MarketWindowChart";
+import type { Markets15MinData, MomentumSignal, MarketTrade, MarketWindowChartData } from "@/types";
 
 interface Markets15MinStatusProps {
   markets15m: Markets15MinData | null;
   marketTrades: MarketTrade[];
   momentum: Record<string, MomentumSignal>;
+  chartData: Record<string, MarketWindowChartData>;
   selectedSymbol: string;
   onSymbolSelect: (symbol: string) => void;
 }
@@ -52,6 +54,18 @@ function formatCountdown(seconds: number): string {
   return `${mins}m ${secs}s`;
 }
 
+// Format countdown with large display
+function formatCountdownLarge(seconds: number): { mins: string; secs: string; label: string } {
+  if (seconds <= 0) return { mins: "00", secs: "00", label: "TRADING NOW" };
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return {
+    mins: mins.toString().padStart(2, "0"),
+    secs: secs.toString().padStart(2, "0"),
+    label: seconds <= 60 ? "OPENING SOON" : "NEXT MARKET IN",
+  };
+}
+
 // Simulated resolved markets (last 4 windows)
 interface ResolvedMarket {
   symbol: string;
@@ -69,6 +83,7 @@ function Markets15MinStatusComponent({
   markets15m,
   marketTrades,
   momentum,
+  chartData,
   selectedSymbol,
   onSymbolSelect,
 }: Markets15MinStatusProps) {
@@ -112,6 +127,16 @@ function Markets15MinStatusComponent({
 
   const symbols = ["BTC", "ETH", "SOL", "XRP", "DOGE"];
 
+  // Calculate time remaining in current window
+  const timeRemainingInWindow = useMemo(() => {
+    if (!timing?.is_open || !currentMarket) return 0;
+    const now_sec = Math.floor(Date.now() / 1000);
+    return Math.max(0, currentMarket.end_time - now_sec);
+  }, [timing, currentMarket, now]);
+
+  const countdownDisplay = useMemo(() => formatCountdownLarge(countdown), [countdown, now]);
+  const windowCountdown = useMemo(() => formatCountdownLarge(timeRemainingInWindow), [timeRemainingInWindow, now]);
+
   return (
     <Card className="bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
       <CardHeader className="pb-2">
@@ -121,21 +146,105 @@ function Markets15MinStatusComponent({
           </CardTitle>
           <div className="flex items-center gap-2">
             <span className="text-xs text-zinc-500">{timezone}</span>
-            <Badge
-              className={`text-xs ${
-                countdown <= 60
-                  ? "bg-yellow-500/20 text-yellow-400"
-                  : countdown === 0
-                  ? "bg-green-500/20 text-green-400"
-                  : "bg-blue-500/20 text-blue-400"
-              }`}
-            >
-              {countdown > 0 ? `Next: ${formatCountdown(countdown)}` : "TRADING"}
-            </Badge>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Prominent Countdown Display */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Next Market Countdown */}
+          <div className={`p-4 rounded-lg text-center ${
+            countdown <= 0
+              ? "bg-green-500/10 border border-green-500/30"
+              : countdown <= 60
+                ? "bg-yellow-500/10 border border-yellow-500/30 animate-pulse"
+                : "bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-300 dark:border-zinc-700"
+          }`}>
+            <div className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1">
+              {countdownDisplay.label}
+            </div>
+            {countdown > 0 ? (
+              <div className="flex items-center justify-center gap-1">
+                <span className={`text-3xl font-mono font-bold ${
+                  countdown <= 60 ? "text-yellow-500" : "text-zinc-700 dark:text-zinc-200"
+                }`}>
+                  {countdownDisplay.mins}
+                </span>
+                <span className="text-xl text-zinc-400">:</span>
+                <span className={`text-3xl font-mono font-bold ${
+                  countdown <= 60 ? "text-yellow-500" : "text-zinc-700 dark:text-zinc-200"
+                }`}>
+                  {countdownDisplay.secs}
+                </span>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-green-500">LIVE</div>
+            )}
+            {timing && (
+              <div className="text-xs text-zinc-500 mt-1">
+                Opens at {new Date(timing.start * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}
+              </div>
+            )}
+          </div>
+
+          {/* Window Closes In */}
+          <div className={`p-4 rounded-lg text-center ${
+            timing?.is_open
+              ? timeRemainingInWindow <= 120
+                ? "bg-red-500/10 border border-red-500/30 animate-pulse"
+                : "bg-blue-500/10 border border-blue-500/30"
+              : "bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-300 dark:border-zinc-700"
+          }`}>
+            <div className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1">
+              {timing?.is_open ? "WINDOW CLOSES IN" : "WAITING FOR MARKET"}
+            </div>
+            {timing?.is_open && timeRemainingInWindow > 0 ? (
+              <div className="flex items-center justify-center gap-1">
+                <span className={`text-3xl font-mono font-bold ${
+                  timeRemainingInWindow <= 120 ? "text-red-500" : "text-blue-500"
+                }`}>
+                  {windowCountdown.mins}
+                </span>
+                <span className="text-xl text-zinc-400">:</span>
+                <span className={`text-3xl font-mono font-bold ${
+                  timeRemainingInWindow <= 120 ? "text-red-500" : "text-blue-500"
+                }`}>
+                  {windowCountdown.secs}
+                </span>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-zinc-400">--:--</div>
+            )}
+            {currentMarket && timing?.is_open && (
+              <div className="text-xs text-zinc-500 mt-1">
+                Closes at {new Date(currentMarket.end_time * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Market Window Chart - shows BTC price vs UP/DOWN odds */}
+        <div className="border border-zinc-300 dark:border-zinc-700 rounded-lg p-2 bg-zinc-50 dark:bg-zinc-800/30">
+          {timing?.is_open && chartData[selectedSymbol] && chartData[selectedSymbol].data.length > 0 ? (
+            <MarketWindowChart
+              symbol={selectedSymbol}
+              data={chartData[selectedSymbol].data}
+              startPrice={chartData[selectedSymbol].start_price}
+              priceRange={500}
+              height={120}
+            />
+          ) : (
+            <div className="h-[120px] flex flex-col items-center justify-center text-sm text-zinc-500">
+              <div className="font-medium">Price vs Odds Chart</div>
+              <div className="text-xs text-zinc-400 mt-1">
+                {timing?.is_open
+                  ? "Waiting for data..."
+                  : "Chart appears when market is open"}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Symbol selector row */}
         <div className="grid grid-cols-5 gap-2">
           {symbols.map((sym) => {
@@ -169,19 +278,25 @@ function Markets15MinStatusComponent({
                     </Badge>
                   )}
                 </div>
+                {/* Polymarket odds */}
                 {market && (
-                  <div className="text-xs text-zinc-500">
-                    {(market.price * 100).toFixed(0)}% Up
+                  <div className="text-xs text-zinc-500 flex items-center gap-1">
+                    <span className="text-purple-400 font-medium">PM:</span>
+                    <span>{(market.price * 100).toFixed(0)}% Up</span>
                   </div>
                 )}
+                {/* Binance price change */}
                 {momo && (
-                  <div
-                    className={`text-xs font-mono ${
-                      momo.price_change_pct > 0 ? "text-green-400" : "text-red-400"
-                    }`}
-                  >
-                    {momo.price_change_pct > 0 ? "+" : ""}
-                    {momo.price_change_pct.toFixed(3)}%
+                  <div className="text-xs flex items-center gap-1">
+                    <span className="text-amber-400 font-medium">B:</span>
+                    <span
+                      className={`font-mono ${
+                        momo.price_change_pct > 0 ? "text-green-400" : "text-red-400"
+                      }`}
+                    >
+                      {momo.price_change_pct > 0 ? "+" : ""}
+                      {momo.price_change_pct.toFixed(3)}%
+                    </span>
                   </div>
                 )}
               </button>
@@ -273,8 +388,18 @@ function Markets15MinStatusComponent({
         )}
 
         {/* Timezone footer */}
-        <div className="text-xs text-zinc-600 text-center pt-2 border-t border-zinc-300 dark:border-zinc-800">
-          All times shown in {timezone} | Markets open at :00, :15, :30, :45
+        <div className="text-xs text-zinc-600 text-center pt-2 border-t border-zinc-300 dark:border-zinc-800 space-y-1">
+          <div className="flex items-center justify-center gap-4">
+            <span className="flex items-center gap-1">
+              <span className="text-purple-400 font-medium">PM</span>
+              <span>= Polymarket odds</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-amber-400 font-medium">B</span>
+              <span>= Binance price</span>
+            </span>
+          </div>
+          <div>All times in {timezone} | Markets open at :00, :15, :30, :45</div>
         </div>
       </CardContent>
     </Card>

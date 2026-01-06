@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Polymarket Whale Tracker",
-  description: "Real-time whale trade tracking for Polymarket crypto markets",
+  title: "Cassandra | 15-Min Crypto Markets",
+  description: "AI-powered trading signals for Polymarket 15-minute crypto prediction markets",
 };
 
 export default function RootLayout({

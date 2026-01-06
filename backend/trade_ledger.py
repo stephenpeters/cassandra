@@ -22,6 +22,40 @@ logger = logging.getLogger("trade_ledger")
 # TRADE RECORD
 # ============================================================================
 
+# ============================================================================
+# TRANSACTION TYPES
+# ============================================================================
+
+class TransactionType:
+    """Transaction types for the ledger"""
+    TRADE = "trade"           # A completed trade (win or loss)
+    CREDIT = "credit"         # Money deposited into account
+    DEBIT = "debit"           # Money withdrawn from account
+    ADJUSTMENT = "adjustment" # Manual P&L adjustment
+    FEE = "fee"               # Trading fees
+
+
+@dataclass
+class Transaction:
+    """
+    A ledger transaction (credit, debit, fee, or adjustment).
+
+    Separate from trades - this tracks account balance changes.
+    """
+    id: str                    # Unique transaction ID
+    account: str               # Account name (e.g., "paper", "live", "main")
+    type: str                  # credit, debit, adjustment, fee
+    amount: float              # Positive = credit, negative = debit
+    balance_after: float       # Running balance after this transaction
+    description: str
+    created_at: str            # ISO timestamp
+    reference_id: Optional[str] = None  # Links to trade_id if applicable
+    notes: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
 @dataclass
 class TradeRecord:
     """
@@ -148,6 +182,36 @@ class TradeLedger:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_exit_time ON trades(exit_time)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_is_winner ON trades(is_winner)")
 
+            # Transactions table for credits, debits, fees, adjustments
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id TEXT PRIMARY KEY,
+                    account TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    balance_after REAL NOT NULL,
+                    description TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    reference_id TEXT,
+                    notes TEXT
+                )
+            """)
+
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at)")
+
+            # Accounts table for tracking balances
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    name TEXT PRIMARY KEY,
+                    balance REAL NOT NULL DEFAULT 0,
+                    initial_balance REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
             conn.commit()
 
     @contextmanager
@@ -222,6 +286,477 @@ class TradeLedger:
         except Exception as e:
             logger.error(f"Failed to add note: {e}")
             return False
+
+    # -------------------------------------------------------------------------
+    # ACCOUNT OPERATIONS
+    # -------------------------------------------------------------------------
+
+    def create_account(
+        self,
+        name: str,
+        initial_balance: float = 0.0,
+    ) -> bool:
+        """
+        Create a new account.
+
+        Args:
+            name: Unique account name (e.g., "paper", "live", "main")
+            initial_balance: Starting balance
+
+        Returns:
+            True if created, False if already exists
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO accounts (name, balance, initial_balance, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (name, initial_balance, initial_balance, now, now))
+                conn.commit()
+
+            # Record initial credit if > 0
+            if initial_balance > 0:
+                self.record_credit(name, initial_balance, "Initial deposit")
+
+            logger.info(f"Created account: {name} with balance ${initial_balance:,.2f}")
+            return True
+
+        except sqlite3.IntegrityError:
+            logger.debug(f"Account already exists: {name}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to create account: {e}")
+            return False
+
+    def get_account_balance(self, name: str) -> float:
+        """Get current balance for an account"""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT balance FROM accounts WHERE name = ?", (name,)
+            )
+            row = cursor.fetchone()
+            return row["balance"] if row else 0.0
+
+    def get_account_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get full account information"""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM accounts WHERE name = ?", (name,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                "name": row["name"],
+                "balance": row["balance"],
+                "initial_balance": row["initial_balance"],
+                "pnl": row["balance"] - row["initial_balance"],
+                "pnl_pct": ((row["balance"] / row["initial_balance"]) - 1) * 100 if row["initial_balance"] > 0 else 0,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+
+    def list_accounts(self) -> List[Dict[str, Any]]:
+        """List all accounts"""
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM accounts ORDER BY name")
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "name": row["name"],
+                    "balance": row["balance"],
+                    "initial_balance": row["initial_balance"],
+                    "pnl": row["balance"] - row["initial_balance"],
+                    "created_at": row["created_at"],
+                })
+            return results
+
+    def _update_account_balance(self, name: str, delta: float) -> float:
+        """
+        Update account balance by delta.
+
+        Returns new balance.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            # Get current balance
+            cursor = conn.execute(
+                "SELECT balance FROM accounts WHERE name = ?", (name,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                # Create account if doesn't exist
+                conn.execute("""
+                    INSERT INTO accounts (name, balance, initial_balance, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (name, delta, 0, now, now))
+                conn.commit()
+                return delta
+
+            new_balance = row["balance"] + delta
+            conn.execute(
+                "UPDATE accounts SET balance = ?, updated_at = ? WHERE name = ?",
+                (new_balance, now, name)
+            )
+            conn.commit()
+            return new_balance
+
+    # -------------------------------------------------------------------------
+    # TRANSACTION OPERATIONS
+    # -------------------------------------------------------------------------
+
+    def record_credit(
+        self,
+        account: str,
+        amount: float,
+        description: str,
+        notes: Optional[str] = None,
+    ) -> Optional[Transaction]:
+        """
+        Record a credit (deposit) to an account.
+
+        Args:
+            account: Account name
+            amount: Amount to credit (positive)
+            description: Description of the credit
+            notes: Optional notes
+
+        Returns:
+            Transaction record or None if failed
+        """
+        return self._record_transaction(
+            account=account,
+            type=TransactionType.CREDIT,
+            amount=abs(amount),
+            description=description,
+            notes=notes,
+        )
+
+    def record_debit(
+        self,
+        account: str,
+        amount: float,
+        description: str,
+        notes: Optional[str] = None,
+    ) -> Optional[Transaction]:
+        """
+        Record a debit (withdrawal) from an account.
+
+        Args:
+            account: Account name
+            amount: Amount to debit (positive value, will be recorded as negative)
+            description: Description of the debit
+            notes: Optional notes
+
+        Returns:
+            Transaction record or None if failed
+        """
+        return self._record_transaction(
+            account=account,
+            type=TransactionType.DEBIT,
+            amount=-abs(amount),
+            description=description,
+            notes=notes,
+        )
+
+    def record_adjustment(
+        self,
+        account: str,
+        amount: float,
+        description: str,
+        notes: Optional[str] = None,
+    ) -> Optional[Transaction]:
+        """
+        Record a manual P&L adjustment.
+
+        Args:
+            account: Account name
+            amount: Adjustment amount (positive or negative)
+            description: Description of the adjustment
+            notes: Optional notes
+
+        Returns:
+            Transaction record or None if failed
+        """
+        return self._record_transaction(
+            account=account,
+            type=TransactionType.ADJUSTMENT,
+            amount=amount,
+            description=description,
+            notes=notes,
+        )
+
+    def record_fee(
+        self,
+        account: str,
+        amount: float,
+        description: str,
+        reference_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[Transaction]:
+        """
+        Record a fee.
+
+        Args:
+            account: Account name
+            amount: Fee amount (positive value, will be recorded as negative)
+            description: Description of the fee
+            reference_id: Optional trade or order ID this fee relates to
+            notes: Optional notes
+
+        Returns:
+            Transaction record or None if failed
+        """
+        return self._record_transaction(
+            account=account,
+            type=TransactionType.FEE,
+            amount=-abs(amount),
+            description=description,
+            reference_id=reference_id,
+            notes=notes,
+        )
+
+    def record_trade_pnl(
+        self,
+        account: str,
+        trade_id: str,
+        pnl: float,
+        description: str,
+    ) -> Optional[Transaction]:
+        """
+        Record P&L from a completed trade.
+
+        Args:
+            account: Account name
+            trade_id: The trade ID this P&L relates to
+            pnl: Profit or loss amount
+            description: Description
+
+        Returns:
+            Transaction record or None if failed
+        """
+        return self._record_transaction(
+            account=account,
+            type=TransactionType.TRADE,
+            amount=pnl,
+            description=description,
+            reference_id=trade_id,
+        )
+
+    def _record_transaction(
+        self,
+        account: str,
+        type: str,
+        amount: float,
+        description: str,
+        reference_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[Transaction]:
+        """
+        Internal method to record a transaction.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        tx_id = f"{type}_{int(datetime.now().timestamp() * 1000)}"
+
+        try:
+            # Update account balance and get new balance
+            new_balance = self._update_account_balance(account, amount)
+
+            # Create transaction record
+            tx = Transaction(
+                id=tx_id,
+                account=account,
+                type=type,
+                amount=amount,
+                balance_after=new_balance,
+                description=description,
+                created_at=now,
+                reference_id=reference_id,
+                notes=notes,
+            )
+
+            # Store in database
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO transactions (
+                        id, account, type, amount, balance_after,
+                        description, created_at, reference_id, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    tx.id, tx.account, tx.type, tx.amount, tx.balance_after,
+                    tx.description, tx.created_at, tx.reference_id, tx.notes
+                ))
+                conn.commit()
+
+            logger.info(f"Transaction: {type} ${amount:+,.2f} -> {account} (balance: ${new_balance:,.2f})")
+            return tx
+
+        except Exception as e:
+            logger.error(f"Failed to record transaction: {e}")
+            return None
+
+    def get_transactions(
+        self,
+        account: Optional[str] = None,
+        type: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Transaction]:
+        """
+        Get transactions with optional filters.
+
+        Args:
+            account: Filter by account
+            type: Filter by transaction type
+            since: Filter transactions after this ISO timestamp or Unix timestamp
+            until: Filter transactions before this ISO timestamp or Unix timestamp
+            limit: Max results
+            offset: Skip first N results
+
+        Returns:
+            List of transactions, newest first
+        """
+        query = "SELECT * FROM transactions WHERE 1=1"
+        params: list = []
+
+        if account:
+            query += " AND account = ?"
+            params.append(account)
+
+        if type:
+            query += " AND type = ?"
+            params.append(type)
+
+        if since:
+            # Convert to ISO if it's a Unix timestamp
+            since_iso = self._normalize_timestamp(since)
+            if since_iso:
+                query += " AND created_at >= ?"
+                params.append(since_iso)
+
+        if until:
+            # Convert to ISO if it's a Unix timestamp
+            until_iso = self._normalize_timestamp(until)
+            if until_iso:
+                query += " AND created_at <= ?"
+                params.append(until_iso)
+
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            results = []
+            for row in cursor.fetchall():
+                results.append(Transaction(
+                    id=row["id"],
+                    account=row["account"],
+                    type=row["type"],
+                    amount=row["amount"],
+                    balance_after=row["balance_after"],
+                    description=row["description"],
+                    created_at=row["created_at"],
+                    reference_id=row["reference_id"],
+                    notes=row["notes"],
+                ))
+            return results
+
+    def _normalize_timestamp(self, ts: str) -> Optional[str]:
+        """
+        Normalize a timestamp to ISO format.
+
+        Accepts:
+        - ISO format strings (2024-01-15T10:30:00Z)
+        - Unix timestamps as strings ("1705312200")
+        - Date strings (2024-01-15)
+
+        Returns:
+            ISO format string or None if invalid
+        """
+        if not ts:
+            return None
+
+        # Try to parse as Unix timestamp (seconds)
+        try:
+            unix_ts = float(ts)
+            # Reasonable range check (after year 2000, before year 2100)
+            if 946684800 < unix_ts < 4102444800:
+                return datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat()
+        except (ValueError, TypeError):
+            pass
+
+        # Try to parse as ISO format or date string
+        try:
+            # Already ISO format with timezone
+            if "T" in ts and ("Z" in ts or "+" in ts):
+                return ts
+            # ISO format without timezone - assume UTC
+            if "T" in ts:
+                return ts + "Z"
+            # Date only - assume start of day UTC
+            if "-" in ts and len(ts) == 10:
+                return ts + "T00:00:00Z"
+        except Exception:
+            pass
+
+        return None
+
+    def get_pnl_summary(self, account: str) -> Dict[str, Any]:
+        """
+        Get P&L summary for an account.
+
+        Returns:
+            Dict with realized_pnl, unrealized_pnl, total_pnl, etc.
+        """
+        with self._get_connection() as conn:
+            # Get account info
+            cursor = conn.execute(
+                "SELECT * FROM accounts WHERE name = ?", (account,)
+            )
+            acct = cursor.fetchone()
+            if not acct:
+                return {
+                    "account": account,
+                    "balance": 0,
+                    "initial_balance": 0,
+                    "total_pnl": 0,
+                    "realized_pnl": 0,
+                    "credits": 0,
+                    "debits": 0,
+                    "fees": 0,
+                    "trade_count": 0,
+                }
+
+            # Sum by transaction type
+            cursor = conn.execute("""
+                SELECT
+                    type,
+                    SUM(amount) as total,
+                    COUNT(*) as count
+                FROM transactions
+                WHERE account = ?
+                GROUP BY type
+            """, (account,))
+
+            totals = {row["type"]: {"total": row["total"], "count": row["count"]}
+                      for row in cursor.fetchall()}
+
+            return {
+                "account": account,
+                "balance": acct["balance"],
+                "initial_balance": acct["initial_balance"],
+                "total_pnl": acct["balance"] - acct["initial_balance"],
+                "realized_pnl": totals.get(TransactionType.TRADE, {}).get("total", 0),
+                "credits": totals.get(TransactionType.CREDIT, {}).get("total", 0),
+                "debits": abs(totals.get(TransactionType.DEBIT, {}).get("total", 0)),
+                "fees": abs(totals.get(TransactionType.FEE, {}).get("total", 0)),
+                "adjustments": totals.get(TransactionType.ADJUSTMENT, {}).get("total", 0),
+                "trade_count": totals.get(TransactionType.TRADE, {}).get("count", 0),
+            }
 
     # -------------------------------------------------------------------------
     # READ OPERATIONS

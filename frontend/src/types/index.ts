@@ -88,10 +88,24 @@ export interface MarketTiming {
   is_open: boolean;
 }
 
+export interface MarketWindowDataPoint {
+  time: number;  // Unix timestamp in seconds
+  binancePrice: number;
+  upPrice: number;
+  downPrice: number;
+}
+
+export interface MarketWindowChartData {
+  symbol: string;
+  start_price: number;  // Binance price at market open (snake_case from backend)
+  data: MarketWindowDataPoint[];
+}
+
 export interface Markets15MinData {
   active: Record<string, Market15Min>;
   timing: MarketTiming;
   trades: MarketTrade[];
+  chart_data?: Record<string, MarketWindowChartData>;  // Chart data per symbol
 }
 
 // Paper Trading types
@@ -106,11 +120,32 @@ export interface PaperTradingConfig {
   max_position_usd: number;  // Hard cap at $5K (liquidity constraint)
   daily_loss_limit_pct: number;
   enabled_assets: string[];  // ["BTC", "ETH"] - hot-reloadable
+
+  // Latency arbitrage settings
+  min_edge_pct: number;  // Minimum edge to trigger (default 5%)
+  min_time_remaining_sec: number;  // Don't trade in last N seconds (default 120)
+  cooldown_sec: number;  // Seconds between trades per symbol (default 30)
+
+  // Checkpoint configuration (seconds into 15-min window)
+  // Default: 180 (3m), 300 (5m), 450 (7m30s), 540 (9m), 720 (12m)
+  signal_checkpoints: number[];  // Checkpoints to generate signals at
+  active_checkpoint: number;  // Checkpoint to execute trades at (default 450 = 7m30s)
+
+  // Legacy entry timing (kept for backwards compatibility)
+  entry_time_up_sec: number;  // When to consider UP entries (default 450 = 7m30s)
+  entry_time_down_sec: number;  // When to consider DOWN entries (default 450 = 7m30s)
+
+  // Confirmation requirements
+  require_volume_confirmation: boolean;
+  require_orderbook_confirmation: boolean;
+  min_volume_delta_usd: number;  // Minimum volume delta (default 10000)
+  min_orderbook_imbalance: number;  // Minimum imbalance (default 0.1)
 }
 
 export interface PaperPosition {
   id: string;
   symbol: string;
+  slug: string;  // e.g., "btc-updown-15m-1736200800"
   side: "UP" | "DOWN";
   entry_price: number;
   size: number;
@@ -124,6 +159,7 @@ export interface PaperPosition {
 export interface PaperTrade {
   id: string;
   symbol: string;
+  slug: string;  // e.g., "btc-updown-15m-1736200800"
   side: "UP" | "DOWN";
   entry_price: number;
   exit_price: number;
@@ -145,6 +181,7 @@ export interface PaperTrade {
 
 export interface PaperSignal {
   symbol: string;
+  slug: string;  // e.g., "btc-updown-15m-1736200800"
   checkpoint: string;
   timestamp: number;
   signal: PaperSignalType;

@@ -526,7 +526,7 @@ async def fetch_historical_candles(
 class Market15Min:
     """A Polymarket 15-minute crypto up/down market"""
     condition_id: str
-    token_id: str
+    token_id: str  # UP token ID (legacy field)
     question: str
     symbol: str  # BTC, ETH, SOL, etc.
     outcome: str  # "Up" or "Down"
@@ -535,11 +535,15 @@ class Market15Min:
     price: float  # Current price (probability)
     volume: float
     is_active: bool
+    up_token_id: str = ""  # Explicit UP token ID
+    down_token_id: str = ""  # DOWN token ID
 
     def to_dict(self) -> dict:
         return {
             "condition_id": self.condition_id,
             "token_id": self.token_id,
+            "up_token_id": self.up_token_id or self.token_id,  # Fallback to legacy
+            "down_token_id": self.down_token_id,
             "question": self.question,
             "symbol": self.symbol,
             "outcome": self.outcome,
@@ -642,6 +646,7 @@ class Polymarket15MinFeed:
         # Fetch markets for current and next window
         windows_to_fetch = [current_window, current_window + 900]
 
+        found_markets = 0
         for symbol in self.CRYPTO_SYMBOLS:
             for window in windows_to_fetch:
                 slug = f"{symbol}-updown-15m-{window}"
@@ -660,10 +665,14 @@ class Polymarket15MinFeed:
                         if markets and len(markets) > 0:
                             market = markets[0]
                             await self._parse_market(symbol.upper(), market, window)
+                            found_markets += 1
 
                 except Exception as e:
-                    # Silently continue on individual market fetch errors
-                    pass
+                    print(f"[Polymarket15Min] Error fetching {slug}: {e}")
+
+        # Log active market count periodically
+        if found_markets > 0 and len(self.active_markets) > 0:
+            print(f"[Polymarket15Min] Active markets: {list(self.active_markets.keys())}")
 
     async def _parse_market(self, symbol: str, market: dict, window_timestamp: int):
         """
@@ -707,18 +716,20 @@ class Polymarket15MinFeed:
             except:
                 up_price = 0.5
 
-            # Get CLOB token IDs
+            # Get CLOB token IDs (both Up and Down)
             clob_token_ids = market.get("clobTokenIds", "[]")
             try:
                 import json as json_module
                 token_ids = json_module.loads(clob_token_ids) if isinstance(clob_token_ids, str) else clob_token_ids
-                up_token_id = token_ids[0] if token_ids else ""
+                up_token_id = token_ids[0] if len(token_ids) > 0 else ""
+                down_token_id = token_ids[1] if len(token_ids) > 1 else ""
             except:
                 up_token_id = ""
+                down_token_id = ""
 
             mkt = Market15Min(
                 condition_id=condition_id,
-                token_id=up_token_id,
+                token_id=up_token_id,  # Legacy field
                 question=question,
                 symbol=symbol,
                 outcome="Up",
@@ -727,6 +738,8 @@ class Polymarket15MinFeed:
                 price=up_price,
                 volume=volume,
                 is_active=is_active,
+                up_token_id=up_token_id,
+                down_token_id=down_token_id,
             )
 
             # Only update if this is for the current window
@@ -815,28 +828,34 @@ class Polymarket15MinFeed:
         return [t.to_dict() for t in trades[:limit]]
 
     def get_next_market_time(self) -> dict:
-        """Get timing info for the next 15-minute market window"""
+        """Get timing info for the current and next 15-minute market window"""
         now = datetime.now()
         minutes = now.minute
 
-        # Next window starts at next :00, :15, :30, or :45
+        # Current window starts at most recent :00, :15, :30, or :45
+        current_slot = (minutes // 15) * 15
+        current_start = now.replace(minute=current_slot, second=0, microsecond=0)
+        current_end = datetime.fromtimestamp(current_start.timestamp() + 900)
+
+        # Next window
         next_slot = ((minutes // 15) + 1) * 15
-        start = now.replace(second=0, microsecond=0)
+        next_start = now.replace(second=0, microsecond=0)
 
         if next_slot >= 60:
-            start = start.replace(minute=0)
-            start = start.replace(hour=start.hour + 1)
+            next_start = next_start.replace(minute=0, hour=next_start.hour + 1)
         else:
-            start = start.replace(minute=next_slot)
+            next_start = next_start.replace(minute=next_slot)
 
-        end = datetime.fromtimestamp(start.timestamp() + 900)
-        time_until_start = (start - now).total_seconds()
+        time_until_next = (next_start - now).total_seconds()
+
+        # We're inside a window if we're between current_start and current_end
+        is_open = current_start <= now < current_end
 
         return {
-            "start": int(start.timestamp()),
-            "end": int(end.timestamp()),
-            "time_until_start": max(0, int(time_until_start)),
-            "is_open": time_until_start <= 0,
+            "start": int(current_start.timestamp()),
+            "end": int(current_end.timestamp()),
+            "time_until_start": max(0, int(time_until_next)),
+            "is_open": is_open,
         }
 
     def stop(self):

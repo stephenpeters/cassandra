@@ -207,14 +207,24 @@ class BinanceFeed:
         return f"wss://stream.binance.com:9443/stream?streams={stream_str}"
 
     async def connect(self):
-        """Connect to Binance WebSocket"""
+        """Connect to Binance WebSocket with exponential backoff reconnection"""
         url = self._build_stream_url()
         self.running = True
+        reconnect_delay = 1  # Start with 1 second
+        max_reconnect_delay = 60  # Max 60 seconds
+        consecutive_failures = 0
 
         while self.running:
             try:
-                async with websockets.connect(url) as ws:
+                async with websockets.connect(
+                    url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=10,
+                ) as ws:
                     self.ws = ws
+                    reconnect_delay = 1  # Reset on successful connection
+                    consecutive_failures = 0
                     print(f"[Binance] Connected to {len(self.symbols)} streams")
 
                     async for message in ws:
@@ -222,10 +232,21 @@ class BinanceFeed:
                             break
                         await self._handle_message(json.loads(message))
 
+            except websockets.ConnectionClosed as e:
+                consecutive_failures += 1
+                print(f"[Binance] Connection closed: {e} (attempt {consecutive_failures})")
             except Exception as e:
-                print(f"[Binance] Connection error: {e}")
-                if self.running:
-                    await asyncio.sleep(5)  # Reconnect delay
+                consecutive_failures += 1
+                print(f"[Binance] Connection error: {e} (attempt {consecutive_failures})")
+
+            if self.running:
+                # Exponential backoff with jitter
+                import random
+                jitter = random.uniform(0, reconnect_delay * 0.1)
+                wait_time = min(reconnect_delay + jitter, max_reconnect_delay)
+                print(f"[Binance] Reconnecting in {wait_time:.1f}s...")
+                await asyncio.sleep(wait_time)
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
     async def _handle_message(self, data: dict):
         """Process incoming WebSocket message"""

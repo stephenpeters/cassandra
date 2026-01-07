@@ -25,12 +25,22 @@ import os
 # SECURITY: API Key Authentication
 # =============================================================================
 
+# Environment: "production" requires API_KEY, "development" allows auto-generation
+ENV = os.getenv("ENV", "development").lower()
 API_KEY = os.getenv("API_KEY")
+
 if not API_KEY:
-    # Generate a random key if not set (will be logged on startup)
-    API_KEY = secrets.token_urlsafe(32)
-    print(f"[Security] No API_KEY set. Generated temporary key: {API_KEY}")
-    print("[Security] Set API_KEY in .env for persistent authentication")
+    if ENV == "production":
+        # In production, require API_KEY to be explicitly set
+        print("[Security] FATAL: API_KEY environment variable not set.")
+        print("[Security] Set API_KEY in .env or environment before starting in production.")
+        import sys
+        sys.exit(1)
+    else:
+        # In development, generate a random key for convenience
+        API_KEY = secrets.token_urlsafe(32)
+        print(f"[Security] No API_KEY set. Generated temporary key: {API_KEY}")
+        print("[Security] Set API_KEY in .env for persistent authentication")
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -415,7 +425,32 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Clean up on shutdown"""
+    """
+    Clean up on shutdown with graceful trading halt.
+
+    This ensures:
+    1. Kill switch is activated to halt any live trading
+    2. Paper trading state is saved
+    3. All background tasks are properly cancelled
+    4. All WebSocket connections are closed
+    """
+    print("[Server] Initiating graceful shutdown...")
+
+    # Activate kill switch for live trading if active
+    if live_trading and live_trading.mode == "live":
+        print("[Server] Activating kill switch for graceful shutdown")
+        await live_trading.activate_kill_switch(reason="Server shutdown")
+
+    # Save paper trading state
+    if paper_trading:
+        paper_trading.save_state()
+        print("[Server] Paper trading state saved")
+
+    # Save historical markets
+    _save_historical_markets()
+    print("[Server] Historical markets saved")
+
+    # Stop data feeds
     if binance_feed:
         await binance_feed.stop()
     if whale_tracker:
@@ -429,8 +464,16 @@ async def shutdown():
     if pm_ws_client:
         pm_ws_client.stop()
 
+    # Cancel background tasks
     for task in background_tasks:
         task.cancel()
+
+    # Close WebSocket connections
+    for client in list(ws_clients):
+        try:
+            await client.close()
+        except Exception:
+            pass
 
     print("[Server] Shutdown complete")
 
@@ -1397,6 +1440,26 @@ async def get_orderbook(symbol: str):
     }
 
 
+@app.get("/api/debug/ws-candles")
+async def debug_ws_candles():
+    """Debug endpoint to check WebSocket candle state"""
+    if not binance_feed:
+        return {"error": "Feed not initialized"}
+
+    result = {}
+    for sym in ["btcusdt", "ethusdt", "solusdt", "xrpusdt", "dogeusdt"]:
+        candles = binance_feed.candles.get(sym, [])
+        result[sym] = {
+            "count": len(candles),
+            "last": candles[-1].to_dict() if candles else None,
+        }
+    return {
+        "candles": result,
+        "chart_data_keys": list(_chart_data.keys()),
+        "tracked_windows": list(_tracked_windows.keys()),
+    }
+
+
 @app.get("/api/time-sync")
 async def get_time_sync():
     """
@@ -1434,12 +1497,13 @@ async def refresh_time_sync():
 async def get_markets_15m():
     """Get active 15-minute markets and timing"""
     if not polymarket_feed:
-        return {"active": {}, "timing": {}, "trades": []}
+        return {"active": {}, "timing": {}, "trades": [], "chart_data": {}}
 
     return {
         "active": polymarket_feed.get_active_markets(),
         "timing": polymarket_feed.get_next_market_time(),
         "trades": polymarket_feed.get_recent_trades(limit=50),
+        "chart_data": get_chart_data_for_markets(),
     }
 
 

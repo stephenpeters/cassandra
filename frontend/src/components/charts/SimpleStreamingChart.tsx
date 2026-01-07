@@ -12,7 +12,7 @@ import {
 import { useTheme } from "@/components/ThemeProvider";
 import { Clock } from "lucide-react";
 // Note: ChevronUp, ChevronDown, ChevronRight replaced with CSS triangles
-import type { PaperSignal } from "@/types";
+import type { TradingSignal, MomentumSignal } from "@/types";
 
 // Filled triangle components
 function TriangleUp({ className }: { className?: string }) {
@@ -85,7 +85,8 @@ interface SimpleStreamingChartProps {
   marketEnd?: number;
   showPriceToBeat?: boolean;
   showCheckpoints?: boolean;
-  signals?: PaperSignal[];
+  signals?: TradingSignal[];
+  momentum?: MomentumSignal;
 }
 
 function SimpleStreamingChartComponent({
@@ -98,6 +99,7 @@ function SimpleStreamingChartComponent({
   showPriceToBeat = true,
   showCheckpoints = false,
   signals = [],
+  momentum,
 }: SimpleStreamingChartProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -241,6 +243,44 @@ function SimpleStreamingChartComponent({
 
       {/* Chart */}
       <div className="relative" style={{ height }}>
+        {/* Technical Indicators Overlay */}
+        {momentum && showPriceToBeat && (
+          <div className="absolute top-1 right-10 z-10 flex items-center gap-1 text-[9px] font-mono bg-zinc-900/70 dark:bg-zinc-900/80 rounded px-1.5 py-0.5">
+            {/* RSI */}
+            {momentum.rsi !== undefined && (
+              <span className={`px-1 rounded ${
+                momentum.rsi < 30 ? "bg-green-500/30 text-green-400" :
+                momentum.rsi > 70 ? "bg-red-500/30 text-red-400" : "text-zinc-400"
+              }`}>
+                RSI:{momentum.rsi.toFixed(0)}
+              </span>
+            )}
+            {/* ADX */}
+            {momentum.adx !== undefined && (
+              <span className={`px-1 rounded ${
+                momentum.adx >= 25 ? "bg-purple-500/30 text-purple-400" : "text-zinc-500"
+              }`}>
+                ADX:{momentum.adx.toFixed(0)}
+              </span>
+            )}
+            {/* Supertrend */}
+            {momentum.supertrend_direction && momentum.supertrend_direction !== "NEUTRAL" && (
+              <span className={`px-1 rounded ${
+                momentum.supertrend_direction === "UP" ? "bg-green-500/30 text-green-400" : "bg-red-500/30 text-red-400"
+              }`}>
+                {momentum.supertrend_direction === "UP" ? "↑ST" : "↓ST"}
+              </span>
+            )}
+            {/* VWAP */}
+            {momentum.vwap_signal && momentum.vwap_signal !== "NEUTRAL" && (
+              <span className={`px-1 rounded ${
+                momentum.vwap_signal === "UP" ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+              }`}>
+                {momentum.vwap_signal === "UP" ? "↑V" : "↓V"}
+              </span>
+            )}
+          </div>
+        )}
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
             {/* Vertical grid lines every 30 seconds */}

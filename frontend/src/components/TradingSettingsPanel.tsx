@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { Settings, Save, RotateCcw, AlertTriangle } from "lucide-react";
-import type { PaperTradingConfig } from "@/types";
+import type { TradingConfig } from "@/types";
 
 // Convert seconds to mm:ss display
 function formatSecondsToTime(seconds: number): string {
@@ -17,8 +17,8 @@ function formatSecondsToTime(seconds: number): string {
 }
 
 interface TradingSettingsPanelProps {
-  config: PaperTradingConfig | null;
-  onConfigUpdate: (config: Partial<PaperTradingConfig>) => Promise<void>;
+  config: TradingConfig | null;
+  onConfigUpdate: (config: Partial<TradingConfig>) => Promise<void>;
 }
 
 const AVAILABLE_ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE"];
@@ -29,7 +29,7 @@ export function TradingSettingsPanel({
 }: TradingSettingsPanelProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [localConfig, setLocalConfig] = useState<Partial<PaperTradingConfig>>({});
+  const [localConfig, setLocalConfig] = useState<Partial<TradingConfig>>({});
   const [hasChanges, setHasChanges] = useState(false);
 
   // Initialize local config when config prop changes
@@ -54,7 +54,7 @@ export function TradingSettingsPanel({
   }, [config]);
 
   const updateLocalConfig = useCallback(
-    (key: keyof PaperTradingConfig, value: unknown) => {
+    (key: keyof TradingConfig, value: unknown) => {
       setLocalConfig((prev) => ({ ...prev, [key]: value }));
       setHasChanges(true);
     },

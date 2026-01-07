@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 # ============================================================================
 
 @dataclass
-class PaperTradingConfig:
+class TradingConfig:
     """Paper trading configuration"""
     enabled: bool = True
     starting_balance: float = 1000.0
@@ -49,10 +49,10 @@ class PaperTradingConfig:
     cooldown_sec: int = 30  # Seconds between trades per symbol
 
     # Checkpoint configuration (seconds into 15-min window)
-    # Checkpoints: 3m=180, 6m=360, 7:30m=450, 9m=540, 12m=720
-    # 7:30m (450s) is the default entry point, 9m (540s) has best historical EV
-    signal_checkpoints: list = field(default_factory=lambda: [180, 360, 450, 540, 720])  # seconds
-    active_checkpoint: int = 450  # Which checkpoint to actually execute trades at (7m30s default)
+    # Two-checkpoint strategy: 7:30 (450s) primary, 9:00 (540s) fallback
+    # 9:00 only executes if no position was taken at 7:30
+    signal_checkpoints: list = field(default_factory=lambda: [450, 540])  # 7:30 and 9:00 only
+    active_checkpoint: int = 450  # Primary checkpoint (7m30s)
 
     # Legacy entry timing (kept for backwards compatibility)
     entry_time_up_sec: int = 450  # When to consider UP entries
@@ -64,6 +64,29 @@ class PaperTradingConfig:
     min_volume_delta_usd: float = 10000.0  # Minimum $10K volume delta
     min_orderbook_imbalance: float = 0.1  # 10% imbalance threshold
 
+    # ==========================================================================
+    # TIERED CONFIRMATION SYSTEM (New)
+    # ==========================================================================
+    # Minimum confirmations: 2 = more trades with tiered sizing, 3 = more conservative
+    min_confirmations: int = 2  # Minimum confirmations to trade
+    partial_size_pct: float = 50.0  # Position size % when only 2 confirmations (50%)
+    edge_mandatory: bool = False  # If True, edge must pass or no trade
+
+    # Indicator toggles (enable/disable each confirmation signal)
+    use_edge: bool = True
+    use_volume_delta: bool = True
+    use_orderbook: bool = True
+    use_vwap: bool = True
+    use_rsi: bool = True
+    use_adx: bool = True
+    use_supertrend: bool = True
+
+    # Indicator thresholds
+    rsi_oversold: float = 30.0  # RSI below this = oversold (buy UP signal)
+    rsi_overbought: float = 70.0  # RSI above this = overbought (buy DOWN signal)
+    adx_trend_threshold: float = 25.0  # ADX above this = strong trend
+    supertrend_multiplier: float = 3.0  # ATR multiplier for Supertrend
+
     def to_dict(self) -> dict:
         d = asdict(self)
         # Ensure enabled_assets is always a list
@@ -72,7 +95,7 @@ class PaperTradingConfig:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict) -> "PaperTradingConfig":
+    def from_dict(cls, data: dict) -> "TradingConfig":
         # Handle enabled_assets which might be missing in old state files
         if "enabled_assets" not in data:
             data["enabled_assets"] = ["BTC"]
@@ -155,7 +178,7 @@ class LatencyGap:
 # ============================================================================
 
 @dataclass
-class PaperPosition:
+class Position:
     """An open paper trading position"""
     id: str
     symbol: str
@@ -191,7 +214,7 @@ class PaperPosition:
 
 
 @dataclass
-class PaperTrade:
+class Trade:
     """A completed paper trade with resolution"""
     id: str
     symbol: str
@@ -244,7 +267,7 @@ class PaperTrade:
 # ============================================================================
 
 @dataclass
-class PaperAccount:
+class TradingAccount:
     """Paper trading account state"""
     balance: float
     starting_balance: float
@@ -253,8 +276,8 @@ class PaperAccount:
     total_trades: int = 0
     winning_trades: int = 0
     losing_trades: int = 0
-    positions: list[PaperPosition] = field(default_factory=list)
-    trade_history: list[PaperTrade] = field(default_factory=list)
+    positions: list[Position] = field(default_factory=list)
+    trade_history: list[Trade] = field(default_factory=list)
     last_reset_date: str = ""
     trading_halted: bool = False
     halt_reason: str = ""
@@ -320,7 +343,7 @@ class MarketWindow:
 # PAPER TRADING ENGINE
 # ============================================================================
 
-class PaperTradingEngine:
+class TradingEngine:
     """
     Core paper trading engine using latency arbitrage.
 
@@ -356,8 +379,8 @@ class PaperTradingEngine:
     }
 
     def __init__(self, data_dir: str = ".", ledger: Optional["TradeLedger"] = None):
-        self.config = PaperTradingConfig()
-        self.account = PaperAccount(
+        self.config = TradingConfig()
+        self.account = TradingAccount(
             balance=self.config.starting_balance,
             starting_balance=self.config.starting_balance,
         )
@@ -381,10 +404,13 @@ class PaperTradingEngine:
 
         # Callbacks
         self.on_signal: Optional[Callable[[CheckpointSignal], None]] = None
-        self.on_trade: Optional[Callable[[PaperTrade], None]] = None
-        self.on_position_open: Optional[Callable[[PaperPosition], None]] = None
+        self.on_trade: Optional[Callable[[Trade], None]] = None
+        self.on_position_open: Optional[Callable[[Position], None]] = None
         self.on_latency_gap: Optional[Callable[[LatencyGap], None]] = None
         self.on_alert: Optional[Callable[[str, str], None]] = None  # (title, message)
+
+        # Trading mode (set by server.py from live_trading)
+        self.trading_mode: str = "paper"  # "paper" or "live"
 
         # Load persisted state
         self._load_state()
@@ -787,76 +813,123 @@ class PaperTradingEngine:
             print(f"[PT] {symbol} checkpoint {checkpoint_str}: NO LATENCY GAP", flush=True)
             return None
 
-        # Check if edge is sufficient
-        min_edge = self.config.min_edge_pct / 100
-        abs_edge = abs(gap.edge)
-
-        if abs_edge < min_edge:
-            print(f"[PT] {symbol} checkpoint {checkpoint_str}: EDGE TOO SMALL ({abs_edge:.1%} < {min_edge:.1%})", flush=True)
-            return None
-
         # Determine intended direction from price gap
         price_direction = "UP" if gap.binance_change_pct > 0 else "DOWN"
 
         # =====================================================================
-        # MOMENTUM CONFIRMATION - Don't trade noise!
-        # The price move must be confirmed by volume and order book
+        # TIERED CONFIRMATION SYSTEM
+        # Count how many indicators confirm the trade, allow partial sizing
         # =====================================================================
+
+        min_edge = self.config.min_edge_pct / 100
+        abs_edge = abs(gap.edge)
 
         volume_delta = momentum.get("volume_delta", 0) if momentum else 0
         orderbook_imbalance = momentum.get("orderbook_imbalance", 0) if momentum else 0
 
-        # Check volume confirmation
-        if self.config.require_volume_confirmation:
-            # Volume delta should align with price direction
-            if price_direction == "UP":
-                # Need positive volume delta (more buying pressure)
-                if volume_delta < self.config.min_volume_delta_usd:
-                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: VOLUME REJECT (need +${self.config.min_volume_delta_usd/1000:.0f}K, got ${volume_delta/1000:.1f}K) | Edge {abs_edge:.1%}", flush=True)
-                    return None  # Not enough buying conviction
-            else:
-                # Need negative volume delta (more selling pressure)
-                if volume_delta > -self.config.min_volume_delta_usd:
-                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: VOLUME REJECT (need -${self.config.min_volume_delta_usd/1000:.0f}K, got ${volume_delta/1000:.1f}K) | Edge {abs_edge:.1%}", flush=True)
-                    return None  # Not enough selling conviction
+        # Get new indicators from momentum dict
+        vwap_signal = momentum.get("vwap_signal", "NEUTRAL") if momentum else "NEUTRAL"
+        rsi = momentum.get("rsi", 50.0) if momentum else 50.0
+        adx = momentum.get("adx", 0.0) if momentum else 0.0
+        supertrend_dir = momentum.get("supertrend_direction", "NEUTRAL") if momentum else "NEUTRAL"
 
-        # Check order book confirmation
-        if self.config.require_orderbook_confirmation:
-            # Order book imbalance should align with price direction
-            if price_direction == "UP":
-                # Need positive imbalance (more bids than asks)
-                if orderbook_imbalance < self.config.min_orderbook_imbalance:
-                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: ORDERBOOK REJECT (need +{self.config.min_orderbook_imbalance:.0%} imbalance, got {orderbook_imbalance:.1%}) | Edge {abs_edge:.1%}", flush=True)
-                    return None  # Order book doesn't support upward move
-            else:
-                # Need negative imbalance (more asks than bids)
-                if orderbook_imbalance > -self.config.min_orderbook_imbalance:
-                    print(f"[PT] {symbol} checkpoint {checkpoint_str}: ORDERBOOK REJECT (need -{self.config.min_orderbook_imbalance:.0%} imbalance, got {orderbook_imbalance:.1%}) | Edge {abs_edge:.1%}", flush=True)
-                    return None  # Order book doesn't support downward move
+        # Count confirmations
+        confirmations = []
+
+        # 1. Edge confirmation
+        if self.config.use_edge and abs_edge >= min_edge:
+            confirmations.append("edge")
+        elif self.config.edge_mandatory:
+            # Edge is mandatory but failed
+            print(f"[PT] {symbol} checkpoint {checkpoint_str}: EDGE MANDATORY FAIL ({abs_edge:.1%} < {min_edge:.1%})", flush=True)
+            return None
+
+        # 2. Volume delta confirmation
+        if self.config.use_volume_delta:
+            vol_ok = False
+            if price_direction == "UP" and volume_delta >= self.config.min_volume_delta_usd:
+                vol_ok = True
+            elif price_direction == "DOWN" and volume_delta <= -self.config.min_volume_delta_usd:
+                vol_ok = True
+            if vol_ok:
+                confirmations.append("volume")
+
+        # 3. Orderbook imbalance confirmation
+        if self.config.use_orderbook:
+            book_ok = False
+            if price_direction == "UP" and orderbook_imbalance >= self.config.min_orderbook_imbalance:
+                book_ok = True
+            elif price_direction == "DOWN" and orderbook_imbalance <= -self.config.min_orderbook_imbalance:
+                book_ok = True
+            if book_ok:
+                confirmations.append("orderbook")
+
+        # 4. VWAP confirmation
+        if self.config.use_vwap and vwap_signal == price_direction:
+            confirmations.append("vwap")
+
+        # 5. RSI confirmation (oversold for UP, overbought for DOWN)
+        if self.config.use_rsi:
+            rsi_ok = False
+            if price_direction == "UP" and rsi < self.config.rsi_oversold:
+                rsi_ok = True
+            elif price_direction == "DOWN" and rsi > self.config.rsi_overbought:
+                rsi_ok = True
+            if rsi_ok:
+                confirmations.append("rsi")
+
+        # 6. ADX confirmation (strong trend)
+        if self.config.use_adx and adx >= self.config.adx_trend_threshold:
+            confirmations.append("adx")
+
+        # 7. Supertrend confirmation
+        if self.config.use_supertrend and supertrend_dir == price_direction:
+            confirmations.append("supertrend")
+
+        conf_count = len(confirmations)
+
+        # Check if we have enough confirmations
+        if conf_count < self.config.min_confirmations:
+            print(f"[PT] {symbol} checkpoint {checkpoint_str}: INSUFFICIENT CONFIRMATIONS ({conf_count}/{self.config.min_confirmations}) - Got: {confirmations}", flush=True)
+            return None
+
+        # Determine position multiplier based on confirmation count
+        # 3+ confirmations = full size, 2 confirmations = partial size
+        if conf_count >= 3:
+            position_multiplier = 1.0
+        else:
+            position_multiplier = self.config.partial_size_pct / 100
+
+        print(f"[PT] {symbol} checkpoint {checkpoint_str}: {conf_count} CONFIRMATIONS ({confirmations}) -> {position_multiplier*100:.0f}% size", flush=True)
 
         # =====================================================================
-        # All confirmations passed - this is a real trend, not noise
+        # Confirmations passed - execute trade
         # =====================================================================
 
         # Determine signal type
-        if gap.edge > min_edge:
+        if gap.edge > 0:
             signal_type = SignalType.BUY_UP
             entry_price = polymarket_up_price
             side = "UP"
-        elif gap.edge < -min_edge:
+        else:
             signal_type = SignalType.BUY_DOWN
             entry_price = 1 - polymarket_up_price
             side = "DOWN"
-        else:
-            return None
 
-        # Calculate confidence from edge + confirmation strength
-        edge_confidence = min(1.0, abs_edge * 5)  # 20% edge = 100%
-        volume_confidence = min(1.0, abs(volume_delta) / 50000)  # $50K = 100%
-        book_confidence = min(1.0, abs(orderbook_imbalance) * 3)  # 33% imbalance = 100%
+        # Calculate confidence from confirmation strength
+        edge_confidence = min(1.0, abs_edge * 5) if "edge" in confirmations else 0
+        volume_confidence = min(1.0, abs(volume_delta) / 50000) if "volume" in confirmations else 0
+        book_confidence = min(1.0, abs(orderbook_imbalance) * 3) if "orderbook" in confirmations else 0
+        vwap_confidence = 0.8 if "vwap" in confirmations else 0
+        rsi_confidence = 0.7 if "rsi" in confirmations else 0
+        adx_confidence = min(1.0, adx / 50) if "adx" in confirmations else 0
+        supertrend_confidence = 0.8 if "supertrend" in confirmations else 0
 
-        # Combined confidence weights edge more heavily
-        confidence = (edge_confidence * 0.5) + (volume_confidence * 0.3) + (book_confidence * 0.2)
+        # Average confidence across active confirmations
+        conf_values = [c for c in [edge_confidence, volume_confidence, book_confidence,
+                                    vwap_confidence, rsi_confidence, adx_confidence,
+                                    supertrend_confidence] if c > 0]
+        confidence = sum(conf_values) / len(conf_values) if conf_values else 0.5
 
         # Build momentum dict from gap data + confirmations
         gap_momentum = {
@@ -868,15 +941,16 @@ class PaperTradingEngine:
             "binance_open": gap.binance_open,
             "binance_current": gap.binance_current,
             "time_remaining": gap.time_remaining_sec,
-            "confirmed_by": [],
-            "checkpoint_sec": current_checkpoint,  # Include checkpoint in seconds for chart mapping
+            "confirmed_by": confirmations,
+            "confirmation_count": conf_count,
+            "position_multiplier": position_multiplier,
+            "checkpoint_sec": current_checkpoint,
+            # New indicators
+            "vwap_signal": vwap_signal,
+            "rsi": rsi,
+            "adx": adx,
+            "supertrend_direction": supertrend_dir,
         }
-
-        # Track what confirmed the signal
-        if abs(volume_delta) >= self.config.min_volume_delta_usd:
-            gap_momentum["confirmed_by"].append("volume_delta")
-        if abs(orderbook_imbalance) >= self.config.min_orderbook_imbalance:
-            gap_momentum["confirmed_by"].append("orderbook")
 
         signal = CheckpointSignal(
             symbol=symbol,
@@ -903,9 +977,9 @@ class PaperTradingEngine:
         # Only execute trades at the active checkpoint
         is_active_checkpoint = current_checkpoint == self.config.active_checkpoint
         if is_active_checkpoint:
-            self._open_position(symbol, side, entry_price, market_start, market_end, checkpoint_str, confidence)
+            self._open_position(symbol, side, entry_price, market_start, market_end, checkpoint_str, confidence, position_multiplier)
             self._last_trade_time[symbol] = now
-            print(f"[Signal] {symbol} @ {checkpoint_str}: EXECUTED {side} trade | Edge: {gap.edge:.1%}", flush=True)
+            print(f"[Signal] {symbol} @ {checkpoint_str}: EXECUTED {side} trade | Edge: {gap.edge:.1%} | Size: {position_multiplier*100:.0f}%", flush=True)
         else:
             print(f"[Signal] {symbol} @ {checkpoint_str}: {signal_type.value} (signal only) | Edge: {gap.edge:.1%}", flush=True)
 
@@ -919,7 +993,7 @@ class PaperTradingEngine:
     # POSITION MANAGEMENT
     # -------------------------------------------------------------------------
 
-    def _calculate_position_size(self, is_adding: bool = False) -> float:
+    def _calculate_position_size(self, is_adding: bool = False, position_multiplier: float = 1.0) -> float:
         """
         Calculate position size based on risk management.
 
@@ -927,7 +1001,7 @@ class PaperTradingEngine:
         1. 2% of account balance
         2. $5K hard cap (liquidity constraint)
 
-        This prevents slippage issues as account scales.
+        Then applies position_multiplier for tiered confirmation sizing.
         """
         pct_based = self.account.balance * (self.config.max_position_pct / 100)
         hard_cap = self.config.max_position_usd
@@ -936,9 +1010,10 @@ class PaperTradingEngine:
 
         if is_adding:
             # When adding to position, use 50% of max
-            return max_position * 0.5
+            max_position = max_position * 0.5
 
-        return max_position
+        # Apply position multiplier (for tiered confirmation: 2 conf = 50%, 3+ conf = 100%)
+        return max_position * position_multiplier
 
     def is_asset_enabled(self, symbol: str) -> bool:
         """Check if an asset is enabled for trading"""
@@ -974,9 +1049,10 @@ class PaperTradingEngine:
         market_end: int,
         checkpoint: str,
         confidence: float,
+        position_multiplier: float = 1.0,
     ):
         """Open a new position"""
-        position_value = self._calculate_position_size(is_adding=False)
+        position_value = self._calculate_position_size(is_adding=False, position_multiplier=position_multiplier)
         size = position_value / price  # Number of contracts
 
         adjusted_price, cost_basis, commission = self._apply_slippage_and_commission(price, size, is_buy=True)
@@ -987,7 +1063,7 @@ class PaperTradingEngine:
 
         position_id = f"{symbol}_{market_start}_{int(time.time())}"
 
-        position = PaperPosition(
+        position = Position(
             id=position_id,
             symbol=symbol,
             side=side,
@@ -1015,7 +1091,7 @@ class PaperTradingEngine:
                     notes=f"Checkpoint: {checkpoint}, Commission rate: {self.config.commission_pct}%",
                 )
             except Exception as e:
-                print(f"[PaperTrading] Failed to record fee to ledger: {e}")
+                print(f"[Trading] Failed to record fee to ledger: {e}")
 
         # Ensure market window is tracked
         window_key = f"{symbol}_{market_start}"
@@ -1082,7 +1158,7 @@ class PaperTradingEngine:
                     notes=f"Checkpoint: {checkpoint}, Commission rate: {self.config.commission_pct}%",
                 )
             except Exception as e:
-                print(f"[PaperTrading] Failed to record fee to ledger: {e}")
+                print(f"[Trading] Failed to record fee to ledger: {e}")
 
         # Save state
         self._save_state()
@@ -1133,7 +1209,7 @@ class PaperTradingEngine:
                 pnl = settlement_value - position.cost_basis
                 pnl_pct = (pnl / position.cost_basis) * 100 if position.cost_basis > 0 else 0
 
-                trade = PaperTrade(
+                trade = Trade(
                     id=position.id,
                     symbol=symbol,
                     side=position.side,
@@ -1188,19 +1264,13 @@ class PaperTradingEngine:
                             description=f"Trade P&L: {symbol} {position.side} {'WIN' if is_correct else 'LOSS'}",
                         )
                     except Exception as e:
-                        print(f"[PaperTrading] Failed to record trade to ledger: {e}")
+                        print(f"[Trading] Failed to record trade to ledger: {e}")
 
                 # Fire trade callback
                 if self.on_trade:
                     self.on_trade(trade)
 
-                # Send alert with balance
-                if self.on_alert:
-                    result = "WIN" if is_correct else "LOSS"
-                    self.on_alert(
-                        f"PAPER {result}",
-                        f"{symbol} {position.side}: ${pnl:+.2f}\nBalance: ${self.account.balance:,.2f}"
-                    )
+                # Individual trade alerts removed - using end-of-market summary instead
 
         # Remove settled positions
         for p in positions_to_remove:
@@ -1208,6 +1278,24 @@ class PaperTradingEngine:
 
         # Check daily loss limit
         self._check_loss_limit()
+
+        # Send end-of-market summary alert ONLY if we had a position
+        if self.on_alert and positions_to_remove:
+            price_move = ((binance_close - binance_open) / binance_open) * 100
+            move_emoji = "📈" if resolution == "UP" else "📉"
+            mode_tag = "🔴 LIVE" if self.trading_mode == "live" else "📝 PAPER"
+
+            # Had position(s) - show result
+            total_pnl = sum(t.pnl for t in self.account.trade_history[:len(positions_to_remove)])
+            wins = sum(1 for t in self.account.trade_history[:len(positions_to_remove)] if t.pnl > 0)
+            losses = len(positions_to_remove) - wins
+            result_emoji = "✅" if total_pnl >= 0 else "❌"
+            self.on_alert(
+                f"[{mode_tag}] MARKET END {symbol}",
+                f"{move_emoji} Resolved: {resolution} ({price_move:+.2f}%)\n"
+                f"{result_emoji} P&L: ${total_pnl:+.2f} ({wins}W/{losses}L)\n"
+                f"💰 Balance: ${self.account.balance:,.2f}"
+            )
 
         # Save state
         self._save_state()
@@ -1248,7 +1336,7 @@ class PaperTradingEngine:
 
     def reset_account(self):
         """Reset account to starting state"""
-        self.account = PaperAccount(
+        self.account = TradingAccount(
             balance=self.config.starting_balance,
             starting_balance=self.config.starting_balance,
             last_reset_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -1267,6 +1355,7 @@ class PaperTradingEngine:
     def _save_state(self):
         """Save state to JSON file"""
         state = {
+            "trading_mode": self.trading_mode,
             "config": self.config.to_dict(),
             "account": {
                 "balance": self.account.balance,
@@ -1288,7 +1377,7 @@ class PaperTradingEngine:
             with open(self._get_state_path(), "w") as f:
                 json.dump(state, f, indent=2)
         except Exception as e:
-            print(f"[PaperTrading] Error saving state: {e}")
+            print(f"[Trading] Error saving state: {e}")
 
     def _load_state(self):
         """Load state from JSON file"""
@@ -1300,16 +1389,21 @@ class PaperTradingEngine:
             with open(path, "r") as f:
                 state = json.load(f)
 
+            # Load trading mode
+            if "trading_mode" in state:
+                self.trading_mode = state["trading_mode"]
+                print(f"[PT] Loaded trading_mode: {self.trading_mode}", flush=True)
+
             # Load config
             if "config" in state:
                 print(f"[PT] Loading config from state: signal_checkpoints={state['config'].get('signal_checkpoints')}", flush=True)
-                self.config = PaperTradingConfig.from_dict(state["config"])
+                self.config = TradingConfig.from_dict(state["config"])
                 print(f"[PT] Loaded config: signal_checkpoints={self.config.signal_checkpoints}", flush=True)
 
             # Load account
             if "account" in state:
                 acc = state["account"]
-                self.account = PaperAccount(
+                self.account = TradingAccount(
                     balance=acc.get("balance", self.config.starting_balance),
                     starting_balance=acc.get("starting_balance", self.config.starting_balance),
                     total_pnl=acc.get("total_pnl", 0.0),
@@ -1324,7 +1418,7 @@ class PaperTradingEngine:
 
                 # Load positions
                 for p_data in acc.get("positions", []):
-                    self.account.positions.append(PaperPosition(
+                    self.account.positions.append(Position(
                         id=p_data["id"],
                         symbol=p_data["symbol"],
                         side=p_data["side"],
@@ -1339,7 +1433,7 @@ class PaperTradingEngine:
 
                 # Load trade history
                 for t_data in acc.get("trade_history", []):
-                    self.account.trade_history.append(PaperTrade(
+                    self.account.trade_history.append(Trade(
                         id=t_data["id"],
                         symbol=t_data["symbol"],
                         side=t_data["side"],
@@ -1362,7 +1456,7 @@ class PaperTradingEngine:
                     ))
 
         except Exception as e:
-            print(f"[PaperTrading] Error loading state: {e}")
+            print(f"[Trading] Error loading state: {e}")
 
     # -------------------------------------------------------------------------
     # API METHODS

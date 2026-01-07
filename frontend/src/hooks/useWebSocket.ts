@@ -12,13 +12,17 @@ import type {
   Markets15MinData,
   MarketTrade,
   MarketWindowChartData,
-  PaperAccount,
-  PaperSignal,
-  PaperTradingConfig,
+  TradingAccount,
+  TradingSignal,
+  TradingConfig,
+  LiveTradingStatus,
 } from "@/types";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Re-export for convenience
+export type { LiveTradingStatus };
 
 export interface UseWebSocketReturn {
   isConnected: boolean;
@@ -32,13 +36,15 @@ export interface UseWebSocketReturn {
   markets15m: Markets15MinData | null;
   marketTrades: MarketTrade[];
   chartData: Record<string, MarketWindowChartData>;
-  paperAccount: PaperAccount | null;
-  paperSignals: PaperSignal[];
-  paperConfig: PaperTradingConfig | null;
+  paperAccount: TradingAccount | null;
+  paperSignals: TradingSignal[];
+  paperConfig: TradingConfig | null;
+  liveStatus: LiveTradingStatus | null;
   requestCandles: (symbol: string) => void;
   togglePaperTrading: () => Promise<void>;
-  resetPaperAccount: () => Promise<void>;
-  updatePaperConfig: (config: Partial<PaperTradingConfig>) => Promise<void>;
+  resetTradingAccount: () => Promise<void>;
+  updatePaperConfig: (config: Partial<TradingConfig>) => Promise<void>;
+  setTradingMode: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -58,9 +64,10 @@ export function useWebSocket(): UseWebSocketReturn {
   const [markets15m, setMarkets15m] = useState<Markets15MinData | null>(null);
   const [marketTrades, setMarketTrades] = useState<MarketTrade[]>([]);
   const [chartData, setChartData] = useState<Record<string, MarketWindowChartData>>({});
-  const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null);
-  const [paperSignals, setPaperSignals] = useState<PaperSignal[]>([]);
-  const [paperConfig, setPaperConfig] = useState<PaperTradingConfig | null>(null);
+  const [paperAccount, setTradingAccount] = useState<TradingAccount | null>(null);
+  const [paperSignals, setTradingSignals] = useState<TradingSignal[]>([]);
+  const [paperConfig, setPaperConfig] = useState<TradingConfig | null>(null);
+  const [liveStatus, setLiveStatus] = useState<LiveTradingStatus | null>(null);
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return;
@@ -104,7 +111,8 @@ export function useWebSocket(): UseWebSocketReturn {
       case "init":
         if (msg.whales) setWhales(msg.whales);
         if (msg.symbols) setSymbols(msg.symbols);
-        if (msg.paper_trading) setPaperAccount(msg.paper_trading);
+        if (msg.paper_trading) setTradingAccount(msg.paper_trading);
+        if (msg.live_trading) setLiveStatus(msg.live_trading as LiveTradingStatus);
         break;
 
       case "candle":
@@ -207,15 +215,15 @@ export function useWebSocket(): UseWebSocketReturn {
 
       case "paper_account":
         if (msg.data) {
-          setPaperAccount(msg.data as PaperAccount);
+          setTradingAccount(msg.data as TradingAccount);
         }
         break;
 
       case "paper_signal":
         if (msg.data) {
-          const signal = msg.data as PaperSignal;
+          const signal = msg.data as TradingSignal;
           // Limit to 20 paper signals (reduced from 50 for memory)
-          setPaperSignals((prev) => [signal, ...prev.slice(0, 19)]);
+          setTradingSignals((prev) => [signal, ...prev.slice(0, 19)]);
         }
         break;
 
@@ -225,6 +233,13 @@ export function useWebSocket(): UseWebSocketReturn {
 
       case "paper_position":
         // Position opened - account will be updated via paper_account message
+        break;
+
+      case "live_status":
+        // Updated live trading status (sent when mode changes)
+        if (msg.data) {
+          setLiveStatus(msg.data as LiveTradingStatus);
+        }
         break;
 
       case "ping":
@@ -261,15 +276,15 @@ export function useWebSocket(): UseWebSocketReturn {
     }
   }, []);
 
-  const resetPaperAccount = useCallback(async () => {
+  const resetTradingAccount = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/paper-trading/reset`, {
         method: "POST",
       });
       if (res.ok) {
         const data = await res.json();
-        setPaperAccount(data.account);
-        setPaperSignals([]);
+        setTradingAccount(data.account);
+        setTradingSignals([]);
       }
     } catch (e) {
       console.error("Failed to reset paper account:", e);
@@ -277,7 +292,7 @@ export function useWebSocket(): UseWebSocketReturn {
   }, []);
 
   const updatePaperConfig = useCallback(
-    async (config: Partial<PaperTradingConfig>) => {
+    async (config: Partial<TradingConfig>) => {
       try {
         const res = await fetch(`${API_URL}/api/paper-trading/config`, {
           method: "POST",
@@ -290,6 +305,36 @@ export function useWebSocket(): UseWebSocketReturn {
         }
       } catch (e) {
         console.error("Failed to update paper config:", e);
+      }
+    },
+    []
+  );
+
+  // Set trading mode (requires API key)
+  const setTradingMode = useCallback(
+    async (mode: "paper" | "live", apiKey: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const res = await fetch(`${API_URL}/api/live-trading/mode`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({ mode }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          // Update local state
+          setLiveStatus((prev) => prev ? { ...prev, mode } : null);
+          return { success: true };
+        } else {
+          return { success: false, error: data.error || "Failed to set mode" };
+        }
+      } catch (e) {
+        console.error("Failed to set trading mode:", e);
+        return { success: false, error: "Network error" };
       }
     },
     []
@@ -380,9 +425,11 @@ export function useWebSocket(): UseWebSocketReturn {
     paperAccount,
     paperSignals,
     paperConfig,
+    liveStatus,
     requestCandles,
     togglePaperTrading,
-    resetPaperAccount,
+    resetTradingAccount,
     updatePaperConfig,
+    setTradingMode,
   };
 }

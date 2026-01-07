@@ -12,7 +12,7 @@ import {
   TrendingDown,
   Clock,
 } from "lucide-react";
-import type { PaperSignal, MomentumSignal } from "@/types";
+import type { TradingSignal, MomentumSignal } from "@/types";
 
 // Checkpoint definitions
 const CHECKPOINTS = [
@@ -24,7 +24,7 @@ const CHECKPOINTS = [
 ];
 
 interface TradingSignalsPanelProps {
-  signals: PaperSignal[];
+  signals: TradingSignal[];
   momentum: Record<string, MomentumSignal>;
   selectedSymbol: string;
   marketStart?: number;  // Current market window start timestamp

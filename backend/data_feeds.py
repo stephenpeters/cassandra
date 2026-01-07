@@ -5,14 +5,22 @@ Uses WebSockets for low-latency updates.
 
 import asyncio
 import json
+import logging
+import random
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Any
 from collections import deque
 import aiohttp
 import websockets
 
+from retry import (
+    retry_http_request,
+    connection_monitor,
+    HTTP_RETRY_CONFIG,
+    RetryConfig,
+)
 from config import (
     CryptoExchangeAPI,
     PolymarketAPI,
@@ -104,6 +112,14 @@ class MomentumSignal:
     orderbook_imbalance: float = 0.0  # -1 to 1
     liquidation_pressure: float = 0.0  # Net liquidation direction
     cross_exchange_lead: Optional[str] = None  # Which exchange is leading
+
+    # New technical indicators
+    vwap: float = 0.0  # Volume Weighted Average Price
+    vwap_signal: str = "NEUTRAL"  # "UP", "DOWN", "NEUTRAL" based on price vs VWAP
+    rsi: float = 50.0  # Relative Strength Index (0-100)
+    adx: float = 0.0  # Average Directional Index (trend strength, 0-100)
+    supertrend_direction: str = "NEUTRAL"  # Supertrend signal
+    supertrend_value: float = 0.0  # Supertrend line value
 
     @property
     def direction(self) -> str:
@@ -225,23 +241,27 @@ class BinanceFeed:
                     self.ws = ws
                     reconnect_delay = 1  # Reset on successful connection
                     consecutive_failures = 0
+                    connection_monitor.mark_success("binance_ws")
                     print(f"[Binance] Connected to {len(self.symbols)} streams")
 
                     async for message in ws:
                         if not self.running:
                             break
+                        connection_monitor.mark_success("binance_ws")
                         await self._handle_message(json.loads(message))
 
             except websockets.ConnectionClosed as e:
                 consecutive_failures += 1
+                connection_monitor.mark_error("binance_ws")
+                connection_monitor.mark_disconnected("binance_ws")
                 print(f"[Binance] Connection closed: {e} (attempt {consecutive_failures})")
             except Exception as e:
                 consecutive_failures += 1
+                connection_monitor.mark_error("binance_ws")
                 print(f"[Binance] Connection error: {e} (attempt {consecutive_failures})")
 
             if self.running:
                 # Exponential backoff with jitter
-                import random
                 jitter = random.uniform(0, reconnect_delay * 0.1)
                 wait_time = min(reconnect_delay + jitter, max_reconnect_delay)
                 print(f"[Binance] Reconnecting in {wait_time:.1f}s...")
@@ -384,16 +404,25 @@ class WhaleTracker:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _poll_wallet(self, session: aiohttp.ClientSession, name: str, wallet: str):
-        """Poll a single wallet for trades"""
+        """Poll a single wallet for trades with retry logic"""
         try:
             url = f"{PolymarketAPI.TRADES}"
             params = {"user": wallet.lower(), "limit": 20}
 
-            async with session.get(url, params=params, timeout=10) as resp:
+            # Use retry wrapper for resilient HTTP requests
+            resp = await retry_http_request(
+                session, "GET", url,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+                config=HTTP_RETRY_CONFIG,
+            )
+
+            async with resp:
                 if resp.status != 200:
                     return
 
                 trades = await resp.json()
+                connection_monitor.mark_success("whale_tracker")
 
                 for trade_data in trades:
                     tx_hash = trade_data.get("transactionHash", "")
@@ -415,6 +444,7 @@ class WhaleTracker:
                     self.last_seen[wallet] = trades[0].get("transactionHash", "")
 
         except Exception as e:
+            connection_monitor.mark_error("whale_tracker")
             print(f"[WhaleTracker] Error polling {name}: {e}")
 
     def _parse_trade(self, name: str, wallet: str, data: dict) -> Optional[WhaleTrade]:
@@ -468,6 +498,7 @@ class MomentumCalculator:
 
         # Price change
         candles = self.feed.candles.get(symbol, [])
+        current_price = candles[-1].close if candles else 0.0
         if len(candles) >= 5:
             price_change = (candles[-1].close - candles[-5].close) / candles[-5].close
         else:
@@ -477,16 +508,159 @@ class MomentumCalculator:
         book = self.feed.orderbooks.get(symbol)
         imbalance = book.imbalance if book else 0.0
 
+        # Calculate new technical indicators
+        vwap = self.calculate_vwap(symbol)
+        vwap_signal = "NEUTRAL"
+        if vwap > 0 and current_price > 0:
+            vwap_diff_pct = (current_price - vwap) / vwap
+            if vwap_diff_pct > 0.001:  # Price > VWAP by 0.1%
+                vwap_signal = "UP"
+            elif vwap_diff_pct < -0.001:  # Price < VWAP by 0.1%
+                vwap_signal = "DOWN"
+
+        rsi = self.calculate_rsi(symbol)
+        adx = self.calculate_adx(symbol)
+        supertrend_direction, supertrend_value = self.calculate_supertrend(symbol)
+
         signal = MomentumSignal(
             symbol=symbol,
             timestamp=now,
             volume_delta=volume_delta,
             price_change_pct=price_change,
             orderbook_imbalance=imbalance,
+            vwap=vwap,
+            vwap_signal=vwap_signal,
+            rsi=rsi,
+            adx=adx,
+            supertrend_direction=supertrend_direction,
+            supertrend_value=supertrend_value,
         )
 
         self.signals[symbol] = signal
         return signal
+
+    def calculate_vwap(self, symbol: str, window_candles: int = 15) -> float:
+        """Calculate Volume Weighted Average Price"""
+        candles = self.feed.candles.get(symbol, [])[-window_candles:]
+        if not candles:
+            return 0.0
+
+        cumulative_tpv = 0.0
+        cumulative_vol = 0.0
+
+        for c in candles:
+            typical_price = (c.high + c.low + c.close) / 3
+            cumulative_tpv += typical_price * c.volume
+            cumulative_vol += c.volume
+
+        return cumulative_tpv / cumulative_vol if cumulative_vol > 0 else 0.0
+
+    def calculate_rsi(self, symbol: str, period: int = 14) -> float:
+        """Calculate Relative Strength Index (0-100)"""
+        candles = self.feed.candles.get(symbol, [])
+        if len(candles) < period + 1:
+            return 50.0  # Neutral
+
+        closes = [c.close for c in candles[-(period + 1):]]
+        gains = []
+        losses = []
+
+        for i in range(1, len(closes)):
+            change = closes[i] - closes[i - 1]
+            if change > 0:
+                gains.append(change)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(change))
+
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100 - (100 / (1 + rs))
+
+    def calculate_adx(self, symbol: str, period: int = 14) -> float:
+        """Calculate Average Directional Index (trend strength 0-100)"""
+        candles = self.feed.candles.get(symbol, [])
+        if len(candles) < period + 1:
+            return 0.0
+
+        tr_list = []
+        plus_dm_list = []
+        minus_dm_list = []
+
+        for i in range(1, len(candles)):
+            high = candles[i].high
+            low = candles[i].low
+            close_prev = candles[i - 1].close
+            high_prev = candles[i - 1].high
+            low_prev = candles[i - 1].low
+
+            tr = max(high - low, abs(high - close_prev), abs(low - close_prev))
+            tr_list.append(tr)
+
+            plus_dm = high - high_prev if high - high_prev > low_prev - low else 0
+            minus_dm = low_prev - low if low_prev - low > high - high_prev else 0
+            plus_dm_list.append(max(0, plus_dm))
+            minus_dm_list.append(max(0, minus_dm))
+
+        atr = sum(tr_list[-period:]) / period if tr_list else 0
+        if atr == 0:
+            return 0.0
+
+        plus_di = 100 * sum(plus_dm_list[-period:]) / period / atr
+        minus_di = 100 * sum(minus_dm_list[-period:]) / period / atr
+
+        di_sum = plus_di + minus_di
+        if di_sum == 0:
+            return 0.0
+
+        dx = abs(plus_di - minus_di) / di_sum * 100
+        return dx
+
+    def calculate_supertrend(self, symbol: str, period: int = 10, multiplier: float = 3.0) -> tuple:
+        """Calculate Supertrend indicator. Returns (direction, supertrend_value)"""
+        candles = self.feed.candles.get(symbol, [])
+        if len(candles) < period + 1:
+            return ("NEUTRAL", 0.0)
+
+        # Calculate ATR
+        tr_list = []
+        for i in range(1, len(candles)):
+            high = candles[i].high
+            low = candles[i].low
+            close_prev = candles[i - 1].close
+            tr = max(high - low, abs(high - close_prev), abs(low - close_prev))
+            tr_list.append(tr)
+
+        if not tr_list:
+            return ("NEUTRAL", 0.0)
+
+        atr = sum(tr_list[-period:]) / min(period, len(tr_list))
+
+        # Current values
+        c = candles[-1]
+        hl2 = (c.high + c.low) / 2
+
+        upper_band = hl2 + (multiplier * atr)
+        lower_band = hl2 - (multiplier * atr)
+
+        # Determine trend based on close vs bands
+        if c.close > upper_band:
+            return ("UP", lower_band)
+        elif c.close < lower_band:
+            return ("DOWN", upper_band)
+        else:
+            # Use momentum direction as tiebreaker
+            prev_close = candles[-2].close if len(candles) > 1 else c.close
+            if c.close > prev_close:
+                return ("UP", lower_band)
+            elif c.close < prev_close:
+                return ("DOWN", upper_band)
+            return ("NEUTRAL", hl2)
 
     def get_all_signals(self) -> dict[str, dict]:
         """Get all current momentum signals"""
@@ -499,6 +673,13 @@ class MomentumCalculator:
                 "volume_delta": round(sig.volume_delta, 0),
                 "price_change_pct": round(sig.price_change_pct * 100, 3),
                 "orderbook_imbalance": round(sig.orderbook_imbalance, 3),
+                # New indicators
+                "vwap": round(sig.vwap, 2),
+                "vwap_signal": sig.vwap_signal,
+                "rsi": round(sig.rsi, 1),
+                "adx": round(sig.adx, 1),
+                "supertrend_direction": sig.supertrend_direction,
+                "supertrend_value": round(sig.supertrend_value, 2),
             }
         return result
 
@@ -677,11 +858,21 @@ class Polymarket15MinFeed:
                     params = {"slug": slug}
                     headers = {"User-Agent": "Mozilla/5.0"}
 
-                    async with session.get(url, params=params, headers=headers, timeout=10) as resp:
+                    # Use retry wrapper for resilient HTTP requests
+                    resp = await retry_http_request(
+                        session, "GET", url,
+                        params=params,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                        config=HTTP_RETRY_CONFIG,
+                    )
+
+                    async with resp:
                         if resp.status != 200:
                             continue
 
                         markets = await resp.json()
+                        connection_monitor.mark_success("polymarket_api")
 
                         if markets and len(markets) > 0:
                             market = markets[0]
@@ -689,6 +880,7 @@ class Polymarket15MinFeed:
                             found_markets += 1
 
                 except Exception as e:
+                    connection_monitor.mark_error("polymarket_api")
                     print(f"[Polymarket15Min] Error fetching {slug}: {e}")
 
         # Log active market count periodically
@@ -775,7 +967,7 @@ class Polymarket15MinFeed:
             print(f"[Polymarket15Min] Error parsing market for {symbol}: {e}")
 
     async def _fetch_market_trades(self, session: aiohttp.ClientSession):
-        """Fetch recent trades for active markets"""
+        """Fetch recent trades for active markets with retry logic"""
         for symbol, market in self.active_markets.items():
             if not market.is_active:
                 continue
@@ -788,11 +980,20 @@ class Polymarket15MinFeed:
                     "limit": 50,
                 }
 
-                async with session.get(url, params=params, timeout=10) as resp:
+                # Use retry wrapper for resilient HTTP requests
+                resp = await retry_http_request(
+                    session, "GET", url,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    config=HTTP_RETRY_CONFIG,
+                )
+
+                async with resp:
                     if resp.status != 200:
                         continue
 
                     trades = await resp.json()
+                    connection_monitor.mark_success("polymarket_trades")
 
                     for trade_data in trades:
                         trade_id = trade_data.get("id", "") or trade_data.get("transactionHash", "")
@@ -814,6 +1015,7 @@ class Polymarket15MinFeed:
                         self.last_trade_ids[market.condition_id] = trades[0].get("id", "") or trades[0].get("transactionHash", "")
 
             except Exception as e:
+                connection_monitor.mark_error("polymarket_trades")
                 print(f"[Polymarket15Min] Error fetching trades for {symbol}: {e}")
 
     def _parse_trade(self, market: Market15Min, data: dict) -> Optional[MarketTrade]:
@@ -863,7 +1065,8 @@ class Polymarket15MinFeed:
         next_start = now.replace(second=0, microsecond=0)
 
         if next_slot >= 60:
-            next_start = next_start.replace(minute=0, hour=next_start.hour + 1)
+            # Use timedelta to handle hour rollover (23:xx -> 00:xx next day)
+            next_start = next_start.replace(minute=0) + timedelta(hours=1)
         else:
             next_start = next_start.replace(minute=next_slot)
 

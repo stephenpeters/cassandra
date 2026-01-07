@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 import websockets
 
+from retry import connection_monitor
+
 PM_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
@@ -73,6 +75,8 @@ class PMWebSocketClient:
             try:
                 await self._connect_and_listen()
             except Exception as e:
+                connection_monitor.mark_error("pm_ws")
+                connection_monitor.mark_disconnected("pm_ws")
                 print(f"[PM-WS] Connection error: {e}", flush=True)
 
             if self.running:
@@ -91,6 +95,7 @@ class PMWebSocketClient:
         ) as ws:
             self.ws = ws
             self._reconnect_delay = 1
+            connection_monitor.mark_success("pm_ws")
             print("[PM-WS] Connected!", flush=True)
 
             # Re-subscribe to any assets we were tracking
@@ -104,6 +109,7 @@ class PMWebSocketClient:
                 # Listen for messages
                 async for message in ws:
                     self._last_message_time = time.time()
+                    connection_monitor.mark_success("pm_ws")
                     await self._handle_message(message)
             finally:
                 keepalive_task.cancel()

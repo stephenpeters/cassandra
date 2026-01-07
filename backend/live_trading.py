@@ -29,7 +29,10 @@ if TYPE_CHECKING:
 # Polymarket SDK
 try:
     from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import OrderArgs, MarketOrderArgs, OrderType, OpenOrderParams
+    from py_clob_client.clob_types import (
+        OrderArgs, MarketOrderArgs, OrderType, OpenOrderParams,
+        BalanceAllowanceParams, AssetType
+    )
     from py_clob_client.order_builder.constants import BUY, SELL
     from py_clob_client.constants import POLYGON
     CLOB_AVAILABLE = True
@@ -40,11 +43,17 @@ except ImportError:
     print("[LiveTrading] WARNING: py-clob-client not installed. Run: pip install py-clob-client")
 
 # Local imports
-from paper_trading import (
-    PaperTradingConfig,
-    PaperTradingEngine,
+from trading import (
+    TradingConfig,
+    TradingEngine,
     CheckpointSignal,
     SignalType,
+)
+from retry import (
+    sync_retry,
+    CLOB_RETRY_CONFIG,
+    RetryConfig,
+    connection_monitor,
 )
 
 
@@ -158,6 +167,13 @@ class LiveTradingConfig:
         """Load config from environment variables"""
         return cls(
             mode=TradingMode(os.getenv("TRADING_MODE", "paper")),
+            # Risk limits from .env (with defaults)
+            max_position_usd=float(os.getenv("MAX_POSITION_USD", "5000")),
+            max_daily_volume_usd=float(os.getenv("MAX_DAILY_VOLUME_USD", "50000")),
+            max_consecutive_losses=int(os.getenv("MAX_CONSECUTIVE_LOSSES", "5")),
+            daily_loss_limit_usd=float(os.getenv("DAILY_LOSS_LIMIT_USD", "1000")),
+            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "20")),
+            # Alerts
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID"),
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
@@ -322,7 +338,7 @@ class LiveTradingEngine:
         self.ledger = ledger
 
         # Initialize paper trading engine for signals (share ledger)
-        self.paper_engine = PaperTradingEngine(data_dir=data_dir, ledger=ledger)
+        self.paper_engine = TradingEngine(data_dir=data_dir, ledger=ledger)
 
         # Polymarket client (only if live mode and key provided)
         self.clob_client: Optional[ClobClient] = None
@@ -357,12 +373,12 @@ class LiveTradingEngine:
 
         try:
             # Initialize client with private key
-            # signature_type: 0=EOA (MetaMask), 1=Email/Magic, 2=Browser proxy
+            # signature_type: 0=EOA (MetaMask), 1=Email/Magic/Embedded, 2=Browser proxy
             self.clob_client = ClobClient(
                 host=self.config.clob_host,
                 key=self.private_key,
                 chain_id=self.config.chain_id,
-                signature_type=0,  # EOA wallet
+                signature_type=1,  # Embedded wallet (Polymarket magic wallet)
             )
 
             # Derive or create API credentials
@@ -380,6 +396,65 @@ class LiveTradingEngine:
         except Exception as e:
             logger.error(f"Failed to initialize CLOB client: {e}")
             self.clob_client = None
+
+    def ensure_clob_initialized(self) -> tuple[bool, str]:
+        """
+        Initialize CLOB client if not already done.
+        Returns (success, message).
+        """
+        if self.clob_client:
+            return True, "CLOB client already initialized"
+
+        if not CLOB_AVAILABLE:
+            return False, "py-clob-client not installed"
+
+        if not self.private_key:
+            return False, "Private key not set"
+
+        self._init_clob_client()
+
+        if self.clob_client:
+            return True, "CLOB client initialized successfully"
+        else:
+            return False, "Failed to initialize CLOB client"
+
+    def _with_clob_retry(self, operation: str, func, *args, **kwargs):
+        """
+        Execute a CLOB client operation with retry logic.
+
+        Args:
+            operation: Name of the operation (for logging)
+            func: The function to execute
+            *args, **kwargs: Arguments to pass to the function
+
+        Returns:
+            Result of the function, or None on failure
+        """
+        max_retries = CLOB_RETRY_CONFIG.max_retries
+        base_delay = CLOB_RETRY_CONFIG.base_delay
+        max_delay = CLOB_RETRY_CONFIG.max_delay
+
+        for attempt in range(max_retries + 1):
+            try:
+                result = func(*args, **kwargs)
+                connection_monitor.mark_success("clob_client")
+                return result
+
+            except Exception as e:
+                connection_monitor.mark_error("clob_client")
+
+                if attempt < max_retries:
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    logger.warning(
+                        f"[CLOB] {operation} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(f"[CLOB] {operation} failed after {max_retries + 1} attempts: {e}")
+                    raise
+
+        return None
 
     # -------------------------------------------------------------------------
     # KILL SWITCH
@@ -636,13 +711,17 @@ class LiveTradingEngine:
         await self._send_alert("ORDER FAILED", f"{order.symbol}: {last_error}")
 
     def _get_current_price(self, token_id: str) -> Optional[float]:
-        """Get current market price for a token (for slippage check)"""
+        """Get current market price for a token (for slippage check) with retry"""
         if not self.clob_client:
             return None
 
         try:
-            # Get order book to find current best price
-            book = self.clob_client.get_order_book(token_id)
+            # Get order book to find current best price (with retry)
+            book = self._with_clob_retry(
+                "get_order_book",
+                self.clob_client.get_order_book,
+                token_id
+            )
             if book and book.get("bids"):
                 return float(book["bids"][0]["price"])
         except Exception as e:
@@ -675,15 +754,77 @@ class LiveTradingEngine:
         return f"{up_token_id}_DOWN"
 
     def _cancel_all_orders(self):
-        """Cancel all open orders"""
+        """Cancel all open orders with retry"""
         if not self.clob_client:
             return
 
         try:
-            self.clob_client.cancel_all()
+            self._with_clob_retry("cancel_all", self.clob_client.cancel_all)
             logger.info("All orders cancelled")
         except Exception as e:
             logger.error(f"Failed to cancel orders: {e}")
+
+    def cancel_order(self, order_id: str) -> tuple[bool, str]:
+        """
+        Cancel a specific order by ID with retry.
+
+        Returns:
+            (success, message)
+        """
+        if not self.clob_client:
+            return False, "CLOB client not initialized"
+
+        # Find the order
+        order = None
+        for o in self.order_history:
+            if o.id == order_id:
+                order = o
+                break
+
+        if not order:
+            return False, f"Order not found: {order_id}"
+
+        if order.status not in ("pending", "submitted", "pending_confirmation"):
+            return False, f"Order cannot be cancelled (status: {order.status})"
+
+        try:
+            if order.polymarket_order_id:
+                self._with_clob_retry("cancel", self.clob_client.cancel, order.polymarket_order_id)
+
+            order.status = "cancelled"
+            self._save_state()
+            logger.info(f"Order cancelled: {order_id}")
+            return True, "Order cancelled"
+        except Exception as e:
+            logger.error(f"Failed to cancel order {order_id}: {e}")
+            return False, str(e)
+
+    def cancel_all_orders(self) -> tuple[bool, str]:
+        """
+        Cancel all open orders with retry.
+
+        Returns:
+            (success, message)
+        """
+        if not self.clob_client:
+            return False, "CLOB client not initialized"
+
+        try:
+            self._with_clob_retry("cancel_all", self.clob_client.cancel_all)
+
+            # Update local order status
+            cancelled_count = 0
+            for order in self.order_history:
+                if order.status in ("pending", "submitted"):
+                    order.status = "cancelled"
+                    cancelled_count += 1
+
+            self._save_state()
+            logger.info(f"Cancelled {cancelled_count} orders")
+            return True, f"Cancelled {cancelled_count} orders"
+        except Exception as e:
+            logger.error(f"Failed to cancel all orders: {e}")
+            return False, str(e)
 
     # -------------------------------------------------------------------------
     # POSITION RESOLUTION
@@ -878,7 +1019,7 @@ class LiveTradingEngine:
 
     def get_wallet_balance(self) -> dict:
         """
-        Get wallet USDC balance from Polymarket.
+        Get wallet USDC balance from Polymarket with retry.
 
         Returns dict with:
         - usdc_balance: Available USDC
@@ -894,21 +1035,33 @@ class LiveTradingEngine:
             }
 
         try:
-            # Get balance from Polymarket API
-            balance_info = self.clob_client.get_balance_allowance()
+            # Get USDC balance from Polymarket API
+            # Must pass explicit params with asset_type and signature_type
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL,
+                signature_type=1  # Embedded wallet (Polymarket magic wallet)
+            )
+            balance_info = self._with_clob_retry(
+                "get_balance_allowance",
+                self.clob_client.get_balance_allowance,
+                params
+            )
 
             usdc_balance = float(balance_info.get("balance", 0)) / 1e6  # USDC has 6 decimals
-            allowance = float(balance_info.get("allowance", 0)) / 1e6
+
+            # Sum all contract allowances
+            allowances = balance_info.get("allowances", {})
+            total_allowance = sum(float(v) for v in allowances.values()) / 1e6
 
             # Calculate locked collateral from open positions
             collateral_locked = sum(p.cost_basis_usd for p in self.open_positions)
 
             return {
                 "usdc_balance": usdc_balance,
-                "allowance": allowance,
+                "allowance": total_allowance,
                 "collateral_locked": collateral_locked,
                 "total_value": usdc_balance + collateral_locked,
-                "available_for_trading": min(usdc_balance, allowance) - collateral_locked,
+                "available_for_trading": min(usdc_balance, total_allowance) - collateral_locked if total_allowance > 0 else usdc_balance - collateral_locked,
             }
 
         except Exception as e:
@@ -940,7 +1093,7 @@ class LiveTradingEngine:
 
     def check_token_allowances(self) -> tuple[bool, str, dict]:
         """
-        Check if token allowances are set for Polymarket contracts.
+        Check if token allowances are set for Polymarket contracts with retry.
 
         Per Polymarket docs: "You only need to set these once per wallet"
         but they MUST be set before trading.
@@ -951,21 +1104,32 @@ class LiveTradingEngine:
             return False, "CLOB client not initialized", {}
 
         try:
-            balance_info = self.clob_client.get_balance_allowance()
-            allowance = float(balance_info.get("allowance", 0)) / 1e6
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL,
+                signature_type=1  # Embedded wallet
+            )
+            balance_info = self._with_clob_retry(
+                "get_balance_allowance",
+                self.clob_client.get_balance_allowance,
+                params
+            )
+
             balance = float(balance_info.get("balance", 0)) / 1e6
+            allowances = balance_info.get("allowances", {})
+            total_allowance = sum(float(v) for v in allowances.values()) / 1e6
 
             details = {
                 "usdc_balance": balance,
-                "usdc_allowance": allowance,
-                "has_allowance": allowance > 0,
+                "usdc_allowance": total_allowance,
+                "has_allowance": total_allowance > 0,
+                "allowances": {k: float(v) / 1e6 for k, v in allowances.items()},
             }
 
-            if allowance <= 0:
+            if total_allowance <= 0:
                 return False, "Token allowance not set. Run set_allowances() first.", details
 
-            if allowance < balance:
-                return True, f"Warning: Allowance (${allowance:.2f}) less than balance (${balance:.2f})", details
+            if total_allowance < balance:
+                return True, f"Warning: Allowance (${total_allowance:.2f}) less than balance (${balance:.2f})", details
 
             return True, "OK", details
 
@@ -975,7 +1139,7 @@ class LiveTradingEngine:
 
     def set_allowances(self) -> tuple[bool, str]:
         """
-        Set token allowances for Polymarket exchange contracts.
+        Set token allowances for Polymarket exchange contracts with retry.
 
         Per Polymarket docs: Approves USDC and conditional tokens for
         the exchange contracts. Only needs to be done once per wallet.
@@ -987,7 +1151,7 @@ class LiveTradingEngine:
 
         try:
             # This sets unlimited allowance for the exchange contracts
-            result = self.clob_client.set_allowances()
+            result = self._with_clob_retry("set_allowances", self.clob_client.set_allowances)
             logger.info(f"Set allowances result: {result}")
             return True, "Allowances set successfully"
         except Exception as e:
@@ -1026,9 +1190,37 @@ class LiveTradingEngine:
     def set_mode(self, mode: str):
         """Change trading mode"""
         try:
-            self.config.mode = TradingMode(mode)
+            new_mode = TradingMode(mode)
+            old_mode = self.config.mode
+
+            # Initialize CLOB client when switching to live mode
+            if new_mode == TradingMode.LIVE and not self.clob_client:
+                if self.private_key and CLOB_AVAILABLE:
+                    self._init_clob_client()
+                else:
+                    logger.error("Cannot switch to live mode: private key or CLOB not available")
+                    return
+
+            self.config.mode = new_mode
             logger.info(f"Trading mode changed to: {mode}")
             self._save_state()
+
+            # Send alert on mode change
+            if old_mode != new_mode:
+                if new_mode == TradingMode.LIVE:
+                    balance = self.get_wallet_balance()
+                    asyncio.create_task(self._send_alert(
+                        "🔴 LIVE MODE ENABLED",
+                        f"Trading with REAL money!\n"
+                        f"💰 Balance: ${balance.get('usdc_balance', 0):,.2f}\n"
+                        f"⚠️ All trades will execute on Polymarket"
+                    ))
+                else:
+                    asyncio.create_task(self._send_alert(
+                        "📝 PAPER MODE ENABLED",
+                        f"Switched to simulated trading.\n"
+                        f"No real money at risk."
+                    ))
         except ValueError:
             logger.error(f"Invalid mode: {mode}")
 

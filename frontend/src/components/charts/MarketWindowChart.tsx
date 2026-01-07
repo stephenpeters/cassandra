@@ -14,7 +14,7 @@ import type {
   Time,
 } from "lightweight-charts";
 import { useTheme } from "@/components/ThemeProvider";
-import type { PaperSignal } from "@/types";
+import type { TradingSignal } from "@/types";
 
 export interface MarketWindowDataPoint {
   time: number;  // Unix timestamp in seconds
@@ -31,7 +31,7 @@ interface MarketWindowChartProps {
   height?: number;
   marketStart?: number;  // Market window start timestamp
   marketEnd?: number;    // Market window end timestamp
-  signals?: PaperSignal[];  // Trading signals to display as markers
+  signals?: TradingSignal[];  // Trading signals to display as markers
   showPriceToBeat?: boolean;  // Show the "price to beat" annotation
 }
 

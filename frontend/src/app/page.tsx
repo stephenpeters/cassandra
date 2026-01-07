@@ -8,17 +8,19 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { PolymarketDashboard } from "@/components/PolymarketDashboard";
-import { PaperTradingCard } from "@/components/PaperTradingCard";
+import { TradingCard } from "@/components/TradingCard";
 import { SettingsModal } from "@/components/SettingsModal";
+import { StrategySettingsModal } from "@/components/StrategySettingsModal";
 import { FollowingModal } from "@/components/FollowingModal";
 import { HistoryModal } from "@/components/HistoryModal";
 import { WhaleTradesTable } from "@/components/WhaleTradesTable";
-import { Settings, Users, Database } from "lucide-react";
+import { Settings, Users, Database, Sliders } from "lucide-react";
 
 export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState("BTC");
   const [selectedWhale, setSelectedWhale] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [strategyOpen, setStrategyOpen] = useState(false);
   const [followingOpen, setFollowingOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -34,9 +36,11 @@ export default function Home() {
     paperAccount,
     paperSignals,
     paperConfig,
+    liveStatus,
     togglePaperTrading,
-    resetPaperAccount,
+    resetTradingAccount,
     updatePaperConfig,
+    setTradingMode,
   } = useWebSocket();
 
   // Filter trades by selected whale
@@ -83,6 +87,14 @@ export default function Home() {
                 {whales.length}
               </Badge>
             </button>
+            {/* Strategy button */}
+            <button
+              onClick={() => setStrategyOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors text-sm"
+            >
+              <Sliders className="w-4 h-4 text-purple-500" />
+              <span className="hidden sm:inline">Strategy</span>
+            </button>
             {/* Settings button */}
             <button
               onClick={() => setSettingsOpen(true)}
@@ -112,14 +124,16 @@ export default function Home() {
           signals={paperSignals}
         />
 
-        {/* Paper Trading Card */}
-        <PaperTradingCard
+        {/* Trading Card - supports both Paper and Live modes */}
+        <TradingCard
           account={paperAccount}
           signals={paperSignals}
           config={paperConfig}
+          liveStatus={liveStatus}
           onToggle={togglePaperTrading}
-          onReset={resetPaperAccount}
+          onReset={resetTradingAccount}
           onConfigUpdate={updatePaperConfig}
+          onModeChange={setTradingMode}
         />
 
         {/* Whale Trades - Simplified */}
@@ -211,6 +225,12 @@ export default function Home() {
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        config={paperConfig}
+        onConfigUpdate={updatePaperConfig}
+      />
+      <StrategySettingsModal
+        isOpen={strategyOpen}
+        onClose={() => setStrategyOpen(false)}
         config={paperConfig}
         onConfigUpdate={updatePaperConfig}
       />

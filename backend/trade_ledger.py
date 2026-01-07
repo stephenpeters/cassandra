@@ -1108,10 +1108,10 @@ def create_trade_record_from_paper(
     signal_edge: float = 0.0,
 ) -> TradeRecord:
     """
-    Create a TradeRecord from a PaperTrade.
+    Create a TradeRecord from a Trade.
 
     Args:
-        paper_trade: A PaperTrade instance
+        paper_trade: A Trade instance
         signal_edge: The edge that was calculated for the signal
 
     Returns:

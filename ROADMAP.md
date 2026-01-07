@@ -57,10 +57,10 @@
 
 | Item | Status | Description |
 |------|--------|-------------|
-| Automated S3 Backups | Planned | Daily backup of trades.db, state files |
-| API Key Security | Planned | Remove auto-generation, fail if not set |
-| Graceful Shutdown | Planned | Kill switch activation on SIGTERM |
-| WebSocket Reconnection | Planned | Auto-reconnect with exponential backoff |
+| Automated S3 Backups | ✅ Done | Daily backup of trades.db, state files |
+| API Key Security | ✅ Done | Require API_KEY in production, exit if not set |
+| Graceful Shutdown | ✅ Done | Kill switch activation on SIGTERM, save state |
+| WebSocket Reconnection | ✅ Done | Exponential backoff with jitter for Binance |
 | CloudWatch Monitoring | Planned | Alarms for service health, disk, memory |
 
 ---
@@ -91,6 +91,8 @@
 - **Vertical market pressure bar** (more compact)
 - **Show UP/DOWN market prices** instead of non-functional controls
 - **Tooltips on all controls and data widgets**
+- **Kill switch button in UI** - Emergency halt trading from frontend
+- **Telegram kill switch** - Reply `/kill` to any alert to halt trading
 
 ### Phase 2: Multi-Market Support
 

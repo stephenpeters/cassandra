@@ -11,8 +11,8 @@ import type {
   MarketTrade,
   MarketWindowChartData,
   OrderBookData,
-  PaperPosition,
-  PaperSignal,
+  Position,
+  TradingSignal,
 } from "@/types";
 import { TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 
@@ -22,10 +22,10 @@ interface PolymarketDashboardProps {
   momentum: Record<string, MomentumSignal>;
   chartData: Record<string, MarketWindowChartData>;
   orderbooks: Record<string, OrderBookData>;
-  positions: PaperPosition[];
+  positions: Position[];
   selectedSymbol: string;
   onSymbolSelect: (symbol: string) => void;
-  signals?: PaperSignal[];  // Trading signals to display on chart
+  signals?: TradingSignal[];  // Trading signals to display on chart
 }
 
 // Only BTC, ETH, SOL have volume
@@ -320,6 +320,7 @@ export function PolymarketDashboard({
                 showPriceToBeat={true}
                 showCheckpoints={true}
                 signals={signals}
+                momentum={selectedMomentum}
               />
             ) : (
               <div className="h-[150px] flex flex-col items-center justify-center text-sm text-zinc-500">

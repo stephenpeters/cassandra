@@ -4,13 +4,13 @@ import { useState, useEffect } from "react";
 import { X, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
-import type { PaperTradingConfig } from "@/types";
+import type { TradingConfig } from "@/types";
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  config: PaperTradingConfig | null;
-  onConfigUpdate: (config: Partial<PaperTradingConfig>) => void;
+  config: TradingConfig | null;
+  onConfigUpdate: (config: Partial<TradingConfig>) => void;
 }
 
 function formatSecondsToTime(seconds: number): string {
@@ -20,7 +20,7 @@ function formatSecondsToTime(seconds: number): string {
 }
 
 export function SettingsModal({ isOpen, onClose, config, onConfigUpdate }: SettingsModalProps) {
-  const [localConfig, setLocalConfig] = useState<Partial<PaperTradingConfig>>({});
+  const [localConfig, setLocalConfig] = useState<Partial<TradingConfig>>({});
 
   useEffect(() => {
     if (config) {

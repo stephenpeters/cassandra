@@ -20,6 +20,10 @@ import uvicorn
 import secrets
 
 import os
+from dotenv import load_dotenv
+
+# Load .env file if present
+load_dotenv()
 
 # =============================================================================
 # SECURITY: API Key Authentication
@@ -106,7 +110,7 @@ from data_feeds import (
     OrderBook,
     WhaleTrade,
 )
-from paper_trading import PaperTradingEngine
+from trading import TradingEngine
 from live_trading import (
     LiveTradingEngine,
     LiveTradingConfig,
@@ -134,6 +138,7 @@ from pm_websocket import (
     PMPriceUpdate,
     get_pm_ws_client,
 )
+from retry import connection_monitor
 from time_sync import (
     start_sync_loop,
     get_synced_timestamp,
@@ -171,7 +176,7 @@ binance_feed: BinanceFeed = None
 whale_tracker: WhaleTracker = None
 momentum_calc: MomentumCalculator = None
 polymarket_feed: Polymarket15MinFeed = None
-paper_trading: PaperTradingEngine = None
+paper_trading: TradingEngine = None
 live_trading: LiveTradingEngine = None
 trade_ledger: TradeLedger = None
 whale_detector: WhaleTradeDetector = None
@@ -189,10 +194,48 @@ background_tasks: list[asyncio.Task] = []
 # STARTUP / SHUTDOWN
 # ============================================================================
 
+async def prefill_historical_candles():
+    """
+    Fetch historical candles from Binance REST API to pre-fill the candle buffer.
+    This allows indicators (RSI, ADX, Supertrend) to calculate immediately.
+    """
+    if not binance_feed:
+        return
+
+    print("[Server] Prefilling historical candles for indicators...")
+
+    for symbol in binance_feed.symbols:
+        try:
+            # Fetch last 100 1-minute candles (enough for RSI-14, ADX-14, etc.)
+            candles = await fetch_historical_candles(symbol.upper(), interval="1m", limit=100)
+
+            if candles:
+                # Convert to OHLCV objects and store
+                ohlcv_list = []
+                for c in candles:
+                    ohlcv = OHLCV(
+                        timestamp=c["time"],
+                        open=c["open"],
+                        high=c["high"],
+                        low=c["low"],
+                        close=c["close"],
+                        volume=c["volume"],
+                    )
+                    ohlcv_list.append(ohlcv)
+
+                binance_feed.candles[symbol] = ohlcv_list
+                print(f"[Server] Loaded {len(ohlcv_list)} candles for {symbol.upper()}")
+
+        except Exception as e:
+            print(f"[Server] Error loading candles for {symbol}: {e}")
+
+    print("[Server] Historical candles loaded")
+
+
 @app.on_event("startup")
 async def startup():
     """Initialize data feeds on startup"""
-    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading, trade_ledger
+    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading, trade_ledger, live_trading, whale_detector, whale_ws_detector, pm_ws_client
 
     # Initialize Binance feed with crypto symbols
     symbols = [v["binance"] for v in CryptoExchangeAPI.SYMBOLS.values()]
@@ -245,7 +288,7 @@ async def startup():
     print(f"[Server] Trade ledger initialized: trades.db")
 
     # Initialize paper trading engine
-    paper_trading = PaperTradingEngine(data_dir=".", ledger=trade_ledger)
+    paper_trading = TradingEngine(data_dir=".", ledger=trade_ledger)
     paper_trading.on_signal = lambda sig: asyncio.create_task(
         broadcast({"type": "paper_signal", "data": sig.to_dict()})
     )
@@ -283,6 +326,8 @@ async def startup():
         live_trading._send_alert(title, msg)
     )
 
+    # Sync trading mode to paper trading engine
+    paper_trading.trading_mode = live_trading.config.mode.value
     print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
 
     # Initialize whale trade detector
@@ -395,6 +440,9 @@ async def startup():
     if not CLOB_AVAILABLE:
         print("[Server] WARNING: py-clob-client not installed - live trading disabled")
 
+    # Pre-fill historical candles for indicator calculations (RSI, ADX, Supertrend)
+    await prefill_historical_candles()
+
     # Start background tasks
     background_tasks.append(asyncio.create_task(binance_feed.connect()))
     background_tasks.append(asyncio.create_task(whale_tracker.start(
@@ -420,6 +468,19 @@ async def startup():
     # Load historical markets from file
     _load_historical_markets()
 
+    # Register connections for health monitoring
+    connection_monitor.register_connection("binance_ws")
+    connection_monitor.register_connection("whale_tracker")
+    connection_monitor.register_connection("polymarket_api")
+    connection_monitor.register_connection("polymarket_trades")
+    connection_monitor.register_connection("pm_ws")
+    connection_monitor.register_connection("whale_ws")
+    connection_monitor.register_connection("clob_client")
+    print("[Server] Connection health monitoring initialized")
+
+    # Start connection health monitoring loop
+    background_tasks.append(asyncio.create_task(connection_health_loop()))
+
     print("[Server] Started all data feeds")
 
 
@@ -437,7 +498,7 @@ async def shutdown():
     print("[Server] Initiating graceful shutdown...")
 
     # Activate kill switch for live trading if active
-    if live_trading and live_trading.mode == "live":
+    if live_trading and live_trading.config.mode == "live":
         print("[Server] Activating kill switch for graceful shutdown")
         await live_trading.activate_kill_switch(reason="Server shutdown")
 
@@ -515,6 +576,37 @@ async def broadcast_momentum_loop():
                 "type": "momentum",
                 "data": signals,
             })
+
+
+async def connection_health_loop():
+    """
+    Periodically check connection health and log warnings for stale connections.
+
+    This loop runs every 30 seconds and:
+    1. Checks if any connections are stale (no successful operation in 2 minutes)
+    2. Logs warnings for unhealthy connections
+    3. Can trigger reconnection callbacks if configured
+    """
+    while True:
+        await asyncio.sleep(30)  # Check every 30 seconds
+
+        try:
+            status = connection_monitor.get_status()
+
+            # Check for unhealthy connections
+            unhealthy = []
+            for name, info in status.items():
+                if not info.get("is_healthy", True):
+                    unhealthy.append(f"{name} (age: {info.get('last_success_age_sec', 'N/A')}s)")
+
+            if unhealthy:
+                print(f"[HealthCheck] WARNING: Unhealthy connections: {', '.join(unhealthy)}", flush=True)
+
+                # Try to trigger reconnection for stale connections
+                await connection_monitor.check_and_reconnect()
+
+        except Exception as e:
+            print(f"[HealthCheck] Error in health check loop: {e}", flush=True)
 
 
 _markets_loop_counter = 0
@@ -954,6 +1046,12 @@ async def paper_trading_loop():
                         }
                         print(f"[Chart] {symbol} late window join at ${current_price:.2f} (elapsed: {elapsed}s)", flush=True)
 
+                        # Also record for paper trading on late join (critical for latency strategy)
+                        if paper_trading_active and open_key not in _recorded_opens:
+                            paper_trading.record_window_open(symbol, market_start, current_price)
+                            _recorded_opens.add(open_key)
+                            print(f"[PT] {symbol} late window open recorded: ${current_price:.2f}", flush=True)
+
                     # Get start price from tracked windows
                     window_info = _tracked_windows.get(open_key, {})
                     start_price = window_info.get("open_price", current_price)
@@ -1005,6 +1103,31 @@ async def paper_trading_loop():
                         "data": signal.to_dict(),
                     })
 
+                    # =========================================================
+                    # LIVE TRADING: Send order to Polymarket if in live mode
+                    # =========================================================
+                    if live_trading and paper_trading.trading_mode == "live":
+                        # Get token_id from active markets
+                        active_markets = polymarket_feed.get_active_markets() if polymarket_feed else {}
+                        market_info = active_markets.get(symbol, {})
+                        up_token_id = market_info.get("up_token_id") or market_info.get("token_id", "")
+
+                        if up_token_id:
+                            try:
+                                order = await live_trading.process_signal(
+                                    signal=signal,
+                                    token_id=up_token_id,
+                                    current_price=polymarket_up_price,
+                                )
+                                if order:
+                                    print(f"[LIVE] {symbol} ORDER PLACED: {order.id} | "
+                                          f"Status: {order.status} | "
+                                          f"Size: ${order.size_usd:.2f}", flush=True)
+                            except Exception as e:
+                                print(f"[LIVE] {symbol} ORDER ERROR: {e}", flush=True)
+                        else:
+                            print(f"[LIVE] {symbol} SKIPPED: No token_id available", flush=True)
+
             # =====================================================================
             # RESOLVE ALL MARKET WINDOWS (for historical tracking)
             # =====================================================================
@@ -1033,9 +1156,9 @@ async def paper_trading_loop():
                         )
 
                         _resolved_windows.add(window_key)
-                        # Reduce logging noise
-                        # print(f"[Historical] {hist_symbol} window resolved: {resolution} | "
-                        #       f"${open_price:.2f} -> ${close_price:.2f}", flush=True)
+
+                        # Note: Alerts are only sent from paper_trading.resolve_market when we have a position
+                        # No alert for markets where no position was taken
 
             # Clean up old tracked/resolved windows
             cutoff = now - 3600  # 1 hour
@@ -1096,6 +1219,41 @@ async def paper_trading_loop():
                         print(f"[Resolution] {position.symbol} FAILED: "
                               f"open_price={open_price}, close_price={close_price}, "
                               f"candles_count={len(candles)}, key={binance_sym}", flush=True)
+
+            # =====================================================================
+            # RESOLVE LIVE TRADING POSITIONS
+            # =====================================================================
+            if live_trading and paper_trading.trading_mode == "live":
+                for position in list(live_trading.open_positions):
+                    if now >= position.market_end:
+                        binance_sym = f"{position.symbol}usdt".lower()
+                        candles = binance_feed.candles.get(binance_sym, [])
+
+                        # Get open/close prices
+                        open_key = f"{position.symbol}_{position.market_start}"
+                        open_price = paper_trading._binance_opens.get(open_key)
+                        close_price = candles[-1].close if candles else None
+
+                        if open_price and close_price:
+                            resolution = "UP" if close_price > open_price else "DOWN"
+                            is_win = position.side == resolution
+
+                            print(f"[LIVE Resolution] {position.symbol} RESOLVED: {resolution} | "
+                                  f"Open: ${open_price:.2f} -> Close: ${close_price:.2f} | "
+                                  f"Position: {position.side} | Result: {'WIN' if is_win else 'LOSS'}", flush=True)
+
+                            try:
+                                await live_trading.resolve_position(
+                                    symbol=position.symbol,
+                                    market_start=position.market_start,
+                                    binance_open=open_price,
+                                    binance_close=close_price,
+                                )
+                            except Exception as e:
+                                print(f"[LIVE Resolution] ERROR resolving {position.symbol}: {e}", flush=True)
+                        else:
+                            print(f"[LIVE Resolution] {position.symbol} FAILED: "
+                                  f"open_price={open_price}, close_price={close_price}", flush=True)
 
         except Exception as e:
             print(f"[PTLoop] ERROR in iteration {iteration}: {e}", flush=True)
@@ -1210,6 +1368,25 @@ async def health_check():
 
     # WebSocket clients
     status["components"]["websocket_clients"] = len(ws_clients)
+
+    # Connection health monitoring
+    try:
+        conn_status = connection_monitor.get_status()
+        status["connections"] = conn_status
+
+        # Check for unhealthy connections
+        unhealthy_conns = [
+            name for name, info in conn_status.items()
+            if not info.get("is_healthy", True)
+        ]
+        if unhealthy_conns:
+            status["components"]["connection_health"] = "degraded"
+            status["unhealthy_connections"] = unhealthy_conns
+        else:
+            status["components"]["connection_health"] = "healthy"
+    except Exception as e:
+        status["components"]["connection_health"] = "error"
+        status["connection_health_error"] = str(e)
 
     # Overall status
     unhealthy = [k for k, v in status["components"].items() if v not in ("healthy", "degraded") and k != "websocket_clients"]
@@ -1713,6 +1890,11 @@ async def set_trading_mode(
         if not os.getenv("POLYMARKET_PRIVATE_KEY"):
             return JSONResponse({"error": "POLYMARKET_PRIVATE_KEY not set - cannot enable live mode"}, status_code=400)
 
+        # Initialize CLOB client if not already done
+        clob_ok, clob_msg = live_trading.ensure_clob_initialized()
+        if not clob_ok:
+            return JSONResponse({"error": f"Failed to initialize CLOB: {clob_msg}"}, status_code=400)
+
         # Check token allowances are set (per Polymarket best practices)
         is_approved, message, _ = live_trading.check_token_allowances()
         if not is_approved:
@@ -1722,6 +1904,17 @@ async def set_trading_mode(
             }, status_code=400)
 
     live_trading.set_mode(request.mode)
+
+    # Sync trading mode to paper trading engine for alerts
+    if paper_trading:
+        paper_trading.trading_mode = request.mode
+
+    # Broadcast updated live trading status to all WebSocket clients
+    await broadcast({
+        "type": "live_status",
+        "data": live_trading.get_status(),
+    })
+
     return {"status": "ok", "mode": request.mode}
 
 
@@ -1803,6 +1996,12 @@ async def get_wallet_balance(_: str = Depends(verify_api_key)):
     """Get wallet USDC balance (requires API key)"""
     if not live_trading:
         return {"error": "Live trading not initialized"}
+
+    # Initialize CLOB if needed
+    clob_ok, clob_msg = live_trading.ensure_clob_initialized()
+    if not clob_ok:
+        return {"error": f"CLOB not available: {clob_msg}"}
+
     return live_trading.get_wallet_balance()
 
 
@@ -1816,6 +2015,11 @@ async def check_allowances(_: str = Depends(verify_api_key)):
     """
     if not live_trading:
         return {"error": "Live trading not initialized"}
+
+    # Initialize CLOB if needed
+    clob_ok, clob_msg = live_trading.ensure_clob_initialized()
+    if not clob_ok:
+        return {"approved": False, "message": f"CLOB not available: {clob_msg}"}
 
     is_approved, message, details = live_trading.check_token_allowances()
     return {
@@ -1835,6 +2039,11 @@ async def set_allowances(_: str = Depends(verify_api_key)):
     """
     if not live_trading:
         return {"error": "Live trading not initialized"}
+
+    # Initialize CLOB if needed
+    clob_ok, clob_msg = live_trading.ensure_clob_initialized()
+    if not clob_ok:
+        return JSONResponse({"error": f"CLOB not available: {clob_msg}"}, status_code=400)
 
     success, message = live_trading.set_allowances()
     if not success:
@@ -1879,6 +2088,43 @@ async def reject_pending_order(
             return {"status": "ok", "order": order.to_dict()}
 
     return JSONResponse({"error": f"Order not found or not pending: {request.order_id}"}, status_code=404)
+
+
+class CancelOrderRequest(BaseModel):
+    order_id: str
+
+
+@app.post("/api/live-trading/cancel-order")
+async def cancel_order(
+    request: CancelOrderRequest,
+    _: str = Depends(verify_api_key)
+):
+    """Cancel a specific order (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    success, message = live_trading.cancel_order(request.order_id)
+
+    if success:
+        return {"status": "ok", "message": message}
+    else:
+        return JSONResponse({"error": message}, status_code=400)
+
+
+@app.post("/api/live-trading/cancel-all-orders")
+async def cancel_all_orders(
+    _: str = Depends(verify_api_key)
+):
+    """Cancel all open orders (requires API key)"""
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    success, message = live_trading.cancel_all_orders()
+
+    if success:
+        return {"status": "ok", "message": message}
+    else:
+        return JSONResponse({"error": message}, status_code=400)
 
 
 # ============================================================================

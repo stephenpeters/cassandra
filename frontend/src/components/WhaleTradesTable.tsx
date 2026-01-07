@@ -28,8 +28,8 @@ function formatTime(timestamp: number): string {
 
 function formatMarket(market: string): string {
   // Shorten market title for display
-  if (market.length > 50) {
-    return market.substring(0, 47) + "...";
+  if (market.length > 40) {
+    return market.substring(0, 37) + "...";
   }
   return market;
 }
@@ -48,31 +48,18 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
       <Table>
         <TableHeader className="sticky top-0 bg-zinc-100 dark:bg-zinc-900">
           <TableRow className="border-zinc-300 dark:border-zinc-800">
-            <TableHead className="text-zinc-400">Time</TableHead>
-            <TableHead className="text-zinc-400">Whale</TableHead>
+            <TableHead className="text-zinc-400 w-20">Time</TableHead>
+            <TableHead className="text-zinc-400 w-24">Whale</TableHead>
             <TableHead className="text-zinc-400">Market</TableHead>
-            <TableHead className="text-zinc-400">Side</TableHead>
-            <TableHead className="text-zinc-400 text-right">Size</TableHead>
-            <TableHead className="text-zinc-400 text-right">Price</TableHead>
-            <TableHead className="text-zinc-400">Signal</TableHead>
+            <TableHead className="text-zinc-400 w-16 text-center">Pos</TableHead>
+            <TableHead className="text-zinc-400 w-20 text-right">Size</TableHead>
+            <TableHead className="text-zinc-400 w-20 text-right">Value</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {trades.map((trade, idx) => {
-            const isCryptoMarket =
-              trade.market.toLowerCase().includes("bitcoin") ||
-              trade.market.toLowerCase().includes("btc") ||
-              trade.market.toLowerCase().includes("eth") ||
-              trade.market.toLowerCase().includes("sol") ||
-              trade.market.toLowerCase().includes("xrp");
-
-            // Determine signal based on outcome and side
             const outcomeL = trade.outcome.toLowerCase();
-            const isBullish =
-              (trade.side === "BUY" &&
-                (outcomeL.includes("up") || outcomeL.includes("above"))) ||
-              (trade.side === "SELL" &&
-                (outcomeL.includes("down") || outcomeL.includes("below")));
+            const isBullish = outcomeL.includes("up") || outcomeL.includes("above");
 
             return (
               <TableRow
@@ -81,59 +68,44 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
                   trade.usd_value > 1000 ? "bg-yellow-500/10 dark:bg-yellow-500/5" : ""
                 }`}
               >
-                <TableCell className="font-mono text-xs text-zinc-500">
+                <TableCell className="font-mono text-xs text-zinc-500 py-2">
                   {formatTime(trade.timestamp)}
                 </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
+                <TableCell className="py-2">
+                  <div className="flex items-center gap-1">
                     {trade.icon && (
                       <img
                         src={trade.icon}
                         alt=""
-                        className="w-5 h-5 rounded"
+                        className="w-4 h-4 rounded"
                       />
                     )}
-                    <span className="text-cyan-600 dark:text-cyan-400 font-medium">
+                    <span className="text-cyan-600 dark:text-cyan-400 font-medium text-xs truncate">
                       {trade.whale}
                     </span>
                   </div>
                 </TableCell>
-                <TableCell className="max-w-[200px]">
-                  <span className="text-zinc-700 dark:text-zinc-300 text-sm truncate block">
+                <TableCell className="py-2">
+                  <span className="text-zinc-700 dark:text-zinc-300 text-xs truncate block">
                     {formatMarket(trade.market)}
                   </span>
-                  <span className="text-xs text-zinc-500">{trade.outcome}</span>
                 </TableCell>
-                <TableCell>
+                <TableCell className="py-2 text-center">
                   <Badge
-                    variant="outline"
-                    className={
-                      trade.side === "BUY"
-                        ? "border-green-500 text-green-500"
-                        : "border-red-500 text-red-500"
-                    }
+                    className={`text-[10px] ${
+                      isBullish
+                        ? "bg-green-500/20 text-green-400"
+                        : "bg-red-500/20 text-red-400"
+                    }`}
                   >
-                    {trade.side}
+                    {isBullish ? "UP" : "DN"}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-right font-mono">
-                  ${trade.size.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                <TableCell className="text-right font-mono text-xs py-2">
+                  {trade.size.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </TableCell>
-                <TableCell className="text-right font-mono text-zinc-400">
-                  {trade.price.toFixed(2)}
-                </TableCell>
-                <TableCell>
-                  {isCryptoMarket && (
-                    <Badge
-                      className={
-                        isBullish
-                          ? "bg-green-500/20 text-green-400 border-green-500"
-                          : "bg-red-500/20 text-red-400 border-red-500"
-                      }
-                    >
-                      {isBullish ? "BULL" : "BEAR"}
-                    </Badge>
-                  )}
+                <TableCell className="text-right font-mono text-xs text-green-500 py-2">
+                  ${trade.usd_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </TableCell>
               </TableRow>
             );

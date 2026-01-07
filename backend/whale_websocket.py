@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Optional, Callable
 from collections import defaultdict
 
+from retry import connection_monitor
+
 logger = logging.getLogger(__name__)
 
 # Profitable whale wallets (from Polymarket profiles)
@@ -151,6 +153,8 @@ class WhaleWebSocketDetector:
             try:
                 await self._connect_and_listen()
             except Exception as e:
+                connection_monitor.mark_error("whale_ws")
+                connection_monitor.mark_disconnected("whale_ws")
                 logger.error(f"[WhaleWS] Connection error: {e}")
                 if self._running:
                     await asyncio.sleep(self._reconnect_delay)
@@ -170,6 +174,7 @@ class WhaleWebSocketDetector:
             async with session.ws_connect(WS_URL, heartbeat=30) as ws:
                 self._ws = ws
                 self._reconnect_delay = 1.0  # Reset on successful connect
+                connection_monitor.mark_success("whale_ws")
                 logger.info("[WhaleWS] Connected successfully")
 
                 # Subscribe to markets
@@ -177,12 +182,15 @@ class WhaleWebSocketDetector:
 
                 # Process messages
                 async for msg in ws:
+                    connection_monitor.mark_success("whale_ws")
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         await self._process_message(msg.data)
                     elif msg.type == aiohttp.WSMsgType.ERROR:
+                        connection_monitor.mark_error("whale_ws")
                         logger.error(f"[WhaleWS] Error: {ws.exception()}")
                         break
                     elif msg.type == aiohttp.WSMsgType.CLOSED:
+                        connection_monitor.mark_disconnected("whale_ws")
                         logger.info("[WhaleWS] Connection closed")
                         break
 

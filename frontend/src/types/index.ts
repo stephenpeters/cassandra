@@ -30,6 +30,13 @@ export interface MomentumSignal {
   volume_delta: number;
   price_change_pct: number;
   orderbook_imbalance: number;
+  // Technical indicators
+  vwap?: number;
+  vwap_signal?: "UP" | "DOWN" | "NEUTRAL";
+  rsi?: number;
+  adx?: number;
+  supertrend_direction?: "UP" | "DOWN" | "NEUTRAL";
+  supertrend_value?: number;
 }
 
 export interface WhaleTrade {
@@ -108,10 +115,10 @@ export interface Markets15MinData {
   chart_data?: Record<string, MarketWindowChartData>;  // Chart data per symbol
 }
 
-// Paper Trading types
-export type PaperSignalType = "HOLD" | "BUY_UP" | "BUY_MORE_UP" | "BUY_DOWN" | "BUY_MORE_DOWN";
+// Trading types
+export type SignalType = "HOLD" | "BUY_UP" | "BUY_MORE_UP" | "BUY_DOWN" | "BUY_MORE_DOWN";
 
-export interface PaperTradingConfig {
+export interface TradingConfig {
   enabled: boolean;
   starting_balance: number;
   slippage_pct: number;
@@ -135,14 +142,34 @@ export interface PaperTradingConfig {
   entry_time_up_sec: number;  // When to consider UP entries (default 450 = 7m30s)
   entry_time_down_sec: number;  // When to consider DOWN entries (default 450 = 7m30s)
 
-  // Confirmation requirements
+  // Confirmation requirements (legacy - kept for backwards compatibility)
   require_volume_confirmation: boolean;
   require_orderbook_confirmation: boolean;
   min_volume_delta_usd: number;  // Minimum volume delta (default 10000)
   min_orderbook_imbalance: number;  // Minimum imbalance (default 0.1)
+
+  // TIERED CONFIRMATION SYSTEM
+  min_confirmations: number;  // Minimum confirmations to trade (default 2)
+  partial_size_pct: number;  // Position size % for partial confirmation (default 50)
+  edge_mandatory: boolean;  // Whether edge is required for all trades
+
+  // Indicator toggles
+  use_edge: boolean;
+  use_volume_delta: boolean;
+  use_orderbook: boolean;
+  use_vwap: boolean;
+  use_rsi: boolean;
+  use_adx: boolean;
+  use_supertrend: boolean;
+
+  // Indicator thresholds
+  rsi_oversold: number;  // RSI threshold for oversold (default 30)
+  rsi_overbought: number;  // RSI threshold for overbought (default 70)
+  adx_trend_threshold: number;  // ADX threshold for strong trend (default 25)
+  supertrend_multiplier: number;  // Supertrend ATR multiplier (default 3.0)
 }
 
-export interface PaperPosition {
+export interface Position {
   id: string;
   symbol: string;
   slug: string;  // e.g., "btc-updown-15m-1736200800"
@@ -156,7 +183,7 @@ export interface PaperPosition {
   checkpoint: string;
 }
 
-export interface PaperTrade {
+export interface Trade {
   id: string;
   symbol: string;
   slug: string;  // e.g., "btc-updown-15m-1736200800"
@@ -179,12 +206,12 @@ export interface PaperTrade {
   signal_confidence: number;
 }
 
-export interface PaperSignal {
+export interface TradingSignal {
   symbol: string;
   slug: string;  // e.g., "btc-updown-15m-1736200800"
   checkpoint: string;
   timestamp: number;
-  signal: PaperSignalType;
+  signal: SignalType;
   fair_value: number;
   market_price: number;
   edge: number;
@@ -198,7 +225,7 @@ export interface PaperSignal {
   };
 }
 
-export interface PaperAccount {
+export interface TradingAccount {
   balance: number;
   starting_balance: number;
   total_pnl: number;
@@ -208,8 +235,8 @@ export interface PaperAccount {
   winning_trades: number;
   losing_trades: number;
   win_rate: number;
-  positions: PaperPosition[];
-  recent_trades: PaperTrade[];
+  positions: Position[];
+  recent_trades: Trade[];
   trading_halted: boolean;
   halt_reason: string;
 }
@@ -306,6 +333,7 @@ export interface WebSocketMessage {
     | "markets_15m"
     | "market_update"
     | "market_trade"
+    | "chart_update"
     | "paper_account"
     | "paper_signal"
     | "paper_trade"
@@ -313,6 +341,7 @@ export interface WebSocketMessage {
     | "live_order"
     | "live_fill"
     | "live_alert"
+    | "live_status"
     | "ping"
     | "pong";
   symbol?: string;
@@ -320,6 +349,6 @@ export interface WebSocketMessage {
   whales?: WhaleInfo[];
   symbols?: string[];
   candles?: CandleData[];
-  paper_trading?: PaperAccount;
+  paper_trading?: TradingAccount;
   live_trading?: LiveTradingStatus;
 }

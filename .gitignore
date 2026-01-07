@@ -49,3 +49,17 @@ live_trading_state.json
 *.key
 *.secret
 credentials.json
+
+# Database files
+*.db
+trades.db
+
+# Strategy backtest data (large files)
+backend/strategy_backtest/data/
+backend/strategy_backtest/analysis/
+backend/strategy_backtest/results/
+backend/strategy_backtest/charts/
+
+# Historical market data
+historical_markets.json
+backend/historical_markets.json

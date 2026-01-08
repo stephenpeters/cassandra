@@ -42,6 +42,28 @@ except ImportError:
     SELL = "SELL"
     print("[LiveTrading] WARNING: py-clob-client not installed. Run: pip install py-clob-client")
 
+# Web3 for token approvals
+try:
+    from web3 import Web3
+    WEB3_AVAILABLE = True
+except ImportError:
+    WEB3_AVAILABLE = False
+    print("[LiveTrading] WARNING: web3 not installed. Run: pip install web3")
+
+# Polymarket contract addresses (Polygon mainnet)
+USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # USDC.e on Polygon
+CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"  # Conditional Tokens
+CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+NEG_RISK_CTF_EXCHANGE = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
+
+# ERC20 ABI for approve
+ERC20_ABI = [{"constant": False, "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"}]
+# ERC1155 ABI for setApprovalForAll
+ERC1155_ABI = [{"constant": False, "inputs": [{"name": "operator", "type": "address"}, {"name": "approved", "type": "bool"}], "name": "setApprovalForAll", "outputs": [], "type": "function"}]
+
+MAX_UINT256 = 2**256 - 1
+
 # Local imports
 from trading import (
     TradingConfig,
@@ -123,6 +145,8 @@ class LiveTradingConfig:
     # API Configuration
     clob_host: str = "https://clob.polymarket.com"
     chain_id: int = POLYGON if CLOB_AVAILABLE else 137
+    # Wallet signature type: 0=EOA (MetaMask), 1=Embedded (Polymarket email login), 2=Browser
+    signature_type: int = 1  # Default to Embedded (Polymarket email login)
 
     # Position limits (HARD CAPS - never exceeded)
     max_position_usd: float = 5000.0  # Max per position
@@ -167,6 +191,8 @@ class LiveTradingConfig:
         """Load config from environment variables"""
         return cls(
             mode=TradingMode(os.getenv("TRADING_MODE", "paper")),
+            # Wallet signature type: 0=EOA, 1=Embedded/Magic, 2=Browser
+            signature_type=int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0")),
             # Risk limits from .env (with defaults)
             max_position_usd=float(os.getenv("MAX_POSITION_USD", "5000")),
             max_daily_volume_usd=float(os.getenv("MAX_DAILY_VOLUME_USD", "50000")),
@@ -372,14 +398,39 @@ class LiveTradingEngine:
             return
 
         try:
-            # Initialize client with private key
+            # Determine funder address based on wallet type
+            # For EOA (type 0): derive from private key
+            # For Magic/Email (type 1) or Browser (type 2): use POLYMARKET_FUNDER env var
+            from eth_account import Account
+
+            funder_from_env = os.getenv("POLYMARKET_FUNDER")
+
+            if self.config.signature_type == 0:
+                # EOA wallet: funder = derived wallet address
+                wallet_address = Account.from_key(self.private_key).address
+                logger.info(f"EOA wallet - derived address: {wallet_address}")
+            elif funder_from_env:
+                # Magic/Browser wallet with explicit funder
+                wallet_address = funder_from_env
+                logger.info(f"Magic/Browser wallet - using POLYMARKET_FUNDER: {wallet_address}")
+            else:
+                # Magic/Browser but no funder set - try deriving (may not work)
+                wallet_address = Account.from_key(self.private_key).address
+                logger.warning(f"signature_type={self.config.signature_type} but POLYMARKET_FUNDER not set!")
+                logger.warning(f"For Magic/Email wallets, set POLYMARKET_FUNDER to your Polymarket wallet address")
+                logger.info(f"Falling back to derived address: {wallet_address}")
+
+            # Initialize client with private key AND funder address
             # signature_type: 0=EOA (MetaMask), 1=Email/Magic/Embedded, 2=Browser proxy
+            # funder: The address that holds funds (required for proper balance/allowance checks)
             self.clob_client = ClobClient(
                 host=self.config.clob_host,
                 key=self.private_key,
                 chain_id=self.config.chain_id,
-                signature_type=1,  # Embedded wallet (Polymarket magic wallet)
+                signature_type=self.config.signature_type,
+                funder=wallet_address,  # CRITICAL: Required for balance checks
             )
+            logger.info(f"CLOB client initialized with signature_type={self.config.signature_type}, funder={wallet_address}")
 
             # Derive or create API credentials
             self.clob_client.set_api_creds(self.clob_client.create_or_derive_api_creds())
@@ -417,6 +468,30 @@ class LiveTradingEngine:
             return True, "CLOB client initialized successfully"
         else:
             return False, "Failed to initialize CLOB client"
+
+    def refresh_api_credentials(self) -> bool:
+        """
+        Refresh API credentials. Call this if getting 'invalid signature' errors.
+        Returns True if successful.
+        """
+        if not self.clob_client:
+            logger.error("Cannot refresh credentials: CLOB client not initialized")
+            return False
+
+        try:
+            logger.info("Refreshing API credentials...")
+            # Re-derive API credentials
+            new_creds = self.clob_client.create_or_derive_api_creds()
+            self.clob_client.set_api_creds(new_creds)
+            logger.info("API credentials refreshed successfully")
+
+            # Verify by getting balance
+            balance = self.get_wallet_balance()
+            logger.info(f"Verified - Balance: ${balance.get('usdc_balance', 0):.2f} USDC")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to refresh API credentials: {e}")
+            return False
 
     def _with_clob_retry(self, operation: str, func, *args, **kwargs):
         """
@@ -498,6 +573,7 @@ class LiveTradingEngine:
         signal: CheckpointSignal,
         token_id: str,
         current_price: float,
+        down_token_id: str = "",
     ) -> Optional[LiveOrder]:
         """
         Process a trading signal and potentially execute an order.
@@ -506,10 +582,13 @@ class LiveTradingEngine:
             signal: The trading signal from paper engine
             token_id: Polymarket token ID for the UP outcome
             current_price: Current market price for UP
+            down_token_id: Polymarket token ID for the DOWN outcome
 
         Returns:
             LiveOrder if order was placed, None otherwise
         """
+        # Store down_token_id for use in _get_down_token_id
+        self._current_down_token_id = down_token_id
         # Safety checks
         if self.kill_switch_active:
             logger.debug("Kill switch active - ignoring signal")
@@ -696,7 +775,16 @@ class LiveTradingEngine:
 
             except Exception as e:
                 last_error = e
+                error_str = str(e).lower()
                 logger.warning(f"Order attempt {attempt + 1}/{max_retries} failed: {e}")
+
+                # Check for signature errors - refresh credentials and retry
+                if "invalid signature" in error_str or "signature" in error_str:
+                    logger.warning("Signature error detected - refreshing API credentials...")
+                    if self.refresh_api_credentials():
+                        logger.info("Credentials refreshed - will retry order")
+                    else:
+                        logger.error("Failed to refresh credentials")
 
                 if attempt < max_retries - 1:
                     # Exponential backoff: 1s, 2s, 4s (non-blocking)
@@ -748,10 +836,12 @@ class LiveTradingEngine:
 
     def _get_down_token_id(self, up_token_id: str) -> str:
         """Get the DOWN token ID from UP token ID"""
-        # In Polymarket, UP and DOWN tokens are paired
-        # This would need to be fetched from the API in practice
-        # For now, return placeholder
-        return f"{up_token_id}_DOWN"
+        # Use the stored down_token_id if available
+        if hasattr(self, '_current_down_token_id') and self._current_down_token_id:
+            return self._current_down_token_id
+        # Fallback error - caller should always pass down_token_id
+        logger.error(f"No down_token_id available for {up_token_id[:20]}...")
+        return ""
 
     def _cancel_all_orders(self):
         """Cancel all open orders with retry"""
@@ -1039,7 +1129,7 @@ class LiveTradingEngine:
             # Must pass explicit params with asset_type and signature_type
             params = BalanceAllowanceParams(
                 asset_type=AssetType.COLLATERAL,
-                signature_type=1  # Embedded wallet (Polymarket magic wallet)
+                signature_type=self.config.signature_type
             )
             balance_info = self._with_clob_retry(
                 "get_balance_allowance",
@@ -1106,7 +1196,7 @@ class LiveTradingEngine:
         try:
             params = BalanceAllowanceParams(
                 asset_type=AssetType.COLLATERAL,
-                signature_type=1  # Embedded wallet
+                signature_type=self.config.signature_type
             )
             balance_info = self._with_clob_retry(
                 "get_balance_allowance",
@@ -1139,21 +1229,84 @@ class LiveTradingEngine:
 
     def set_allowances(self) -> tuple[bool, str]:
         """
-        Set token allowances for Polymarket exchange contracts with retry.
+        Set token allowances for Polymarket exchange contracts using web3.
 
         Per Polymarket docs: Approves USDC and conditional tokens for
         the exchange contracts. Only needs to be done once per wallet.
 
         Returns (success, message)
         """
-        if not self.clob_client:
-            return False, "CLOB client not initialized"
+        if not WEB3_AVAILABLE:
+            return False, "web3 not installed. Run: pip install web3"
+
+        private_key = os.getenv("POLYMARKET_PRIVATE_KEY")
+        if not private_key:
+            return False, "POLYMARKET_PRIVATE_KEY not set"
+
+        rpc_url = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
 
         try:
-            # This sets unlimited allowance for the exchange contracts
-            result = self._with_clob_retry("set_allowances", self.clob_client.set_allowances)
-            logger.info(f"Set allowances result: {result}")
-            return True, "Allowances set successfully"
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+            if not w3.is_connected():
+                return False, f"Failed to connect to Polygon RPC: {rpc_url}"
+
+            account = w3.eth.account.from_key(private_key)
+            address = account.address
+
+            # Get current nonce
+            nonce = w3.eth.get_transaction_count(address)
+
+            # USDC contract
+            usdc = w3.eth.contract(address=Web3.to_checksum_address(USDC_ADDRESS), abi=ERC20_ABI)
+
+            # CTF (Conditional Tokens) contract
+            ctf = w3.eth.contract(address=Web3.to_checksum_address(CTF_ADDRESS), abi=ERC1155_ABI)
+
+            # Spenders that need approval
+            spenders = [CTF_EXCHANGE, NEG_RISK_CTF_EXCHANGE, NEG_RISK_ADAPTER]
+
+            tx_hashes = []
+            gas_price = w3.eth.gas_price
+
+            for i, spender in enumerate(spenders):
+                spender_checksum = Web3.to_checksum_address(spender)
+
+                # 1. Approve USDC for this spender
+                tx = usdc.functions.approve(spender_checksum, MAX_UINT256).build_transaction({
+                    'from': address,
+                    'nonce': nonce + (i * 2),
+                    'gas': 100000,
+                    'gasPrice': gas_price,
+                    'chainId': 137,  # Polygon
+                })
+                signed_tx = w3.eth.account.sign_transaction(tx, private_key)
+                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                tx_hashes.append(tx_hash.hex())
+                logger.info(f"USDC approval tx for {spender}: {tx_hash.hex()}")
+
+                # 2. Approve CTF (ERC1155) for this spender
+                tx = ctf.functions.setApprovalForAll(spender_checksum, True).build_transaction({
+                    'from': address,
+                    'nonce': nonce + (i * 2) + 1,
+                    'gas': 100000,
+                    'gasPrice': gas_price,
+                    'chainId': 137,  # Polygon
+                })
+                signed_tx = w3.eth.account.sign_transaction(tx, private_key)
+                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                tx_hashes.append(tx_hash.hex())
+                logger.info(f"CTF approval tx for {spender}: {tx_hash.hex()}")
+
+            # Wait for transactions to be mined
+            logger.info("Waiting for approval transactions to be mined...")
+            for tx_hash in tx_hashes:
+                receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                if receipt.status != 1:
+                    return False, f"Transaction {tx_hash} failed"
+
+            logger.info(f"All {len(tx_hashes)} approval transactions confirmed")
+            return True, f"Allowances set successfully ({len(tx_hashes)} transactions)"
+
         except Exception as e:
             logger.error(f"Failed to set allowances: {e}")
             return False, f"Failed to set allowances: {e}"

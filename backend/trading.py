@@ -290,6 +290,8 @@ class TradingAccount:
 
     @property
     def total_return_pct(self) -> float:
+        if self.starting_balance == 0:
+            return 0.0
         return (self.total_pnl / self.starting_balance) * 100
 
     def to_dict(self) -> dict:
@@ -1344,6 +1346,21 @@ class TradingEngine:
         self.market_windows.clear()
         self.recent_signals.clear()
         self._save_state()
+
+    def reset_to_defaults(self):
+        """Reset both config and account to factory defaults"""
+        # Reset config to defaults
+        self.config = TradingConfig()
+        # Reset account with new config's starting balance
+        self.account = TradingAccount(
+            balance=self.config.starting_balance,
+            starting_balance=self.config.starting_balance,
+            last_reset_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        )
+        self.market_windows.clear()
+        self.recent_signals.clear()
+        self._save_state()
+        print("[PT] Reset to factory defaults")
 
     # -------------------------------------------------------------------------
     # PERSISTENCE

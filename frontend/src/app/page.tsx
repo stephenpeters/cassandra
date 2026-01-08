@@ -39,8 +39,11 @@ export default function Home() {
     liveStatus,
     togglePaperTrading,
     resetTradingAccount,
+    factoryReset,
     updatePaperConfig,
     setTradingMode,
+    placeTestOrder,
+    setAllowances,
   } = useWebSocket();
 
   // Filter trades by selected whale
@@ -130,10 +133,17 @@ export default function Home() {
           signals={paperSignals}
           config={paperConfig}
           liveStatus={liveStatus}
+          markets15m={markets15m}
           onToggle={togglePaperTrading}
           onReset={resetTradingAccount}
+          onFactoryReset={factoryReset}
           onConfigUpdate={updatePaperConfig}
           onModeChange={setTradingMode}
+          onSetAllowances={setAllowances}
+          onManualOrder={async (order) => {
+            const apiKey = localStorage.getItem("predmkt_api_key") || "";
+            return placeTestOrder(order.symbol, order.side, order.amount, apiKey);
+          }}
         />
 
         {/* Whale Trades - Simplified */}
@@ -233,6 +243,9 @@ export default function Home() {
         onClose={() => setStrategyOpen(false)}
         config={paperConfig}
         onConfigUpdate={updatePaperConfig}
+        liveStatus={liveStatus}
+        onTestOrder={placeTestOrder}
+        onSetAllowances={setAllowances}
       />
       <FollowingModal
         isOpen={followingOpen}

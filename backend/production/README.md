@@ -209,6 +209,120 @@ Add to crontab:
 0 0 * * * tar -czf /opt/backups/predmkt-$(date +\%Y\%m\%d).tar.gz /opt/predmkt/backend/paper_trading_state.json
 ```
 
+## Live Trading Wallet Setup
+
+### Important: Polymarket API Trading Requirements
+
+Polymarket's CLOB (Central Limit Order Book) API **only works with EOA wallets** (Externally Owned Accounts), not embedded/smart contract wallets. This means:
+
+- **DO NOT** use the embedded wallet that Polymarket creates for you when you sign up
+- **DO NOT** try to fund your Polymarket "deposit address" for API trading
+- **MUST** create a fresh EOA wallet (e.g., in MetaMask) and fund it directly
+
+### 1. Create a Trading Wallet (MetaMask Recommended)
+
+```bash
+# Option 1: MetaMask Browser Extension (Recommended)
+# 1. Install MetaMask from https://metamask.io
+# 2. Create a new wallet or import an existing one
+# 3. Add Polygon network:
+#    - Network Name: Polygon Mainnet
+#    - RPC URL: https://polygon-rpc.com
+#    - Chain ID: 137
+#    - Currency Symbol: POL
+#    - Block Explorer: https://polygonscan.com
+
+# Option 2: Generate via Python
+python3 -c "from eth_account import Account; a=Account.create(); print(f'Address: {a.address}\\nPrivate Key: {a.key.hex()[2:]}')"
+```
+
+### 2. Fund Your Wallet with POL (for gas)
+
+You need POL (formerly MATIC) for transaction gas fees on Polygon.
+
+**Getting POL:**
+- Buy POL on any exchange (Coinbase, Binance, Kraken)
+- Withdraw to your wallet address on **Polygon network** (not Ethereum!)
+- Minimum recommended: **10 POL** (~$5 at current prices)
+- Gas per trade is ~0.001 POL (~$0.01)
+
+### 3. Fund Your Wallet with USDC.e (for trading)
+
+**CRITICAL: Polymarket uses USDC.e, NOT native USDC**
+
+| Token | Contract Address | Works on Polymarket? |
+|-------|-----------------|---------------------|
+| USDC.e (Bridged) | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` | YES |
+| USDC (Native) | `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359` | NO |
+
+**Getting USDC.e:**
+1. **From an exchange**: Withdraw USDC to Polygon (most exchanges send USDC.e)
+2. **From Polymarket**: Withdraw from your Polymarket account to your trading wallet
+3. **Swap**: Use [QuickSwap](https://quickswap.exchange) or [Uniswap](https://app.uniswap.org) to swap native USDC → USDC.e
+
+**Why USDC.e?**
+- USDC.e is the bridged version from Ethereum (the original on Polygon)
+- Native USDC arrived later and Polymarket's contracts use the original USDC.e
+- If you have native USDC, swap it on a DEX before trading
+
+### 4. Configure the .env File
+
+```bash
+# In backend/.env
+POLYMARKET_PRIVATE_KEY=your_64_char_hex_private_key_no_0x_prefix
+POLYMARKET_SIGNATURE_TYPE=0
+POLYMARKET_FUNDER=0xYourWalletAddressHere
+```
+
+**Signature Types:**
+- `0` = EOA (Externally Owned Account) - **Use this for MetaMask wallets**
+- `1` = Poly Proxy
+- `2` = Gnosis Safe
+
+### 5. Set Token Allowances (First-Time Setup)
+
+Before your first trade, you must approve Polymarket contracts to spend your tokens:
+
+1. Switch to **Live Mode** in the UI
+2. Enter your API key
+3. Click **"Set Allowances"**
+
+This sends blockchain transactions to approve:
+- USDC.e spending on the exchange contract
+- Conditional token (CT) trading on the CTF exchange
+
+Cost: ~0.01 POL in gas (one-time per wallet)
+
+### 6. Verify Your Setup
+
+```bash
+# Check wallet balances
+curl -s -X POST https://polygon-rpc.com -H "Content-Type: application/json" -d '{
+  "jsonrpc": "2.0",
+  "method": "eth_getBalance",
+  "params": ["YOUR_WALLET_ADDRESS", "latest"],
+  "id": 1
+}' | python3 -c "import sys,json; r=json.load(sys.stdin); print(f'POL: {int(r[\"result\"], 16)/1e18:.4f}')"
+
+# Check USDC.e balance
+curl -s -X POST https://polygon-rpc.com -H "Content-Type: application/json" -d '{
+  "jsonrpc": "2.0",
+  "method": "eth_call",
+  "params": [{"to": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "data": "0x70a08231000000000000000000000000YOUR_ADDRESS_WITHOUT_0x"}, "latest"],
+  "id": 1
+}' | python3 -c "import sys,json; r=json.load(sys.stdin); print(f'USDC.e: ${int(r[\"result\"], 16)/1e6:.2f}')"
+```
+
+### Common Funding Mistakes
+
+| Mistake | Result | Solution |
+|---------|--------|----------|
+| Funded embedded wallet | Can't trade via API | Withdraw to EOA wallet |
+| Sent native USDC | "Balance/allowance" error | Swap to USDC.e on DEX |
+| No POL for gas | Transactions fail | Buy/transfer POL |
+| Wrong network | Funds on Ethereum | Bridge to Polygon |
+| No allowances set | "Not enough allowance" | Click Set Allowances |
+
 ## Security Checklist
 
 - [ ] SSH key-only auth enabled
@@ -221,3 +335,8 @@ Add to crontab:
 - [ ] Non-root user running service
 - [ ] Systemd sandboxing enabled
 - [ ] Log rotation configured
+- [ ] Trading wallet is a fresh EOA (not main wallet)
+- [ ] Private key stored securely in .env
+- [ ] POL balance sufficient for gas
+- [ ] USDC.e (not native USDC) funded
+- [ ] Token allowances set

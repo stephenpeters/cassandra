@@ -16,17 +16,21 @@ import {
   ShieldAlert,
   Wallet,
 } from "lucide-react";
-import type { TradingAccount, TradingSignal, TradingConfig, LiveTradingStatus } from "@/types";
+import type { TradingAccount, TradingSignal, TradingConfig, LiveTradingStatus, Markets15MinData } from "@/types";
 
 interface TradingCardProps {
   account: TradingAccount | null;
   signals: TradingSignal[];
   config: TradingConfig | null;
   liveStatus: LiveTradingStatus | null;
+  markets15m: Markets15MinData | null;
   onToggle: () => void;
   onReset: () => void;
+  onFactoryReset: () => void;
   onConfigUpdate: (config: Partial<TradingConfig>) => void;
   onModeChange: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  onSetAllowances?: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  onManualOrder?: (order: { symbol: string; side: "UP" | "DOWN"; amount: number }) => Promise<{ success: boolean; error?: string }>;
 }
 
 function formatCurrency(value: number): string {
@@ -91,10 +95,14 @@ function TradingCardComponent({
   signals,
   config,
   liveStatus,
+  markets15m,
   onToggle,
   onReset,
+  onFactoryReset,
   onConfigUpdate,
   onModeChange,
+  onSetAllowances,
+  onManualOrder,
 }: TradingCardProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showModeModal, setShowModeModal] = useState(false);
@@ -103,6 +111,17 @@ function TradingCardComponent({
   const [isChangingMode, setIsChangingMode] = useState(false);
   const [uptime, setUptime] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
+
+  // Allowances state
+  const [allowancesLoading, setAllowancesLoading] = useState(false);
+  const [allowancesResult, setAllowancesResult] = useState<{ success: boolean; error?: string } | null>(null);
+
+  // Manual order state
+  const [manualSymbol, setManualSymbol] = useState<string>("BTC");
+  const [manualSide, setManualSide] = useState<"UP" | "DOWN">("UP");
+  const [manualAmount, setManualAmount] = useState("10");
+  const [manualOrderLoading, setManualOrderLoading] = useState(false);
+  const [manualOrderResult, setManualOrderResult] = useState<{ success: boolean; error?: string } | null>(null);
 
   // Load API key from localStorage on mount
   useEffect(() => {
@@ -144,6 +163,50 @@ function TradingCardComponent({
     }
 
     setIsChangingMode(false);
+  };
+
+  // Handle setting allowances
+  const handleSetAllowances = async () => {
+    if (!onSetAllowances || !apiKey) return;
+
+    setAllowancesLoading(true);
+    setAllowancesResult(null);
+
+    try {
+      const result = await onSetAllowances(apiKey);
+      setAllowancesResult(result);
+      if (result.success) {
+        setTimeout(() => setAllowancesResult(null), 5000);
+      }
+    } catch {
+      setAllowancesResult({ success: false, error: "Unexpected error" });
+    } finally {
+      setAllowancesLoading(false);
+    }
+  };
+
+  // Handle manual order
+  const handleManualOrder = async () => {
+    if (!onManualOrder) return;
+
+    setManualOrderLoading(true);
+    setManualOrderResult(null);
+
+    try {
+      const result = await onManualOrder({
+        symbol: manualSymbol,
+        side: manualSide,
+        amount: parseFloat(manualAmount),
+      });
+      setManualOrderResult(result);
+      if (result.success) {
+        setTimeout(() => setManualOrderResult(null), 5000);
+      }
+    } catch {
+      setManualOrderResult({ success: false, error: "Unexpected error" });
+    } finally {
+      setManualOrderLoading(false);
+    }
   };
 
   // Track uptime since component mount (proxy for session start)
@@ -292,6 +355,87 @@ function TradingCardComponent({
                 {liveStatus?.clob_connected ? "Connected" : "Disconnected"}
               </div>
             </div>
+
+            {/* Set Allowances - Live mode only */}
+            {onSetAllowances && (
+              <div className="p-3 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg col-span-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-zinc-500">Token Allowances</span>
+                  <button
+                    onClick={handleSetAllowances}
+                    disabled={allowancesLoading || !apiKey}
+                    className="px-2 py-1 text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-600 dark:text-amber-400 rounded disabled:opacity-50 transition-colors"
+                  >
+                    {allowancesLoading ? "Setting..." : "Set Allowances"}
+                  </button>
+                </div>
+                {allowancesResult && (
+                  <div className={`text-xs ${allowancesResult.success ? "text-green-500" : "text-red-500"}`}>
+                    {allowancesResult.success ? "✓ Allowances set!" : `✗ ${allowancesResult.error}`}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Manual Order - Live mode only */}
+            {onManualOrder && (
+              <div className="p-3 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg col-span-2">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs text-zinc-500">Manual Order</div>
+                  {markets15m?.active?.[manualSymbol] && (
+                    <div className="text-xs font-mono bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded">
+                      {manualSymbol.toLowerCase()}-updown-15m-{markets15m.active[manualSymbol].start_time}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <select
+                    value={manualSymbol}
+                    onChange={(e) => setManualSymbol(e.target.value)}
+                    className="px-2 py-1 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded font-medium"
+                  >
+                    <option value="BTC">BTC</option>
+                    <option value="ETH">ETH</option>
+                    <option value="SOL">SOL</option>
+                    <option value="XRP">XRP</option>
+                  </select>
+                  <select
+                    value={manualSide}
+                    onChange={(e) => setManualSide(e.target.value as "UP" | "DOWN")}
+                    className={`px-2 py-1 text-xs border rounded font-medium ${
+                      manualSide === "UP"
+                        ? "bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-700 dark:text-green-400"
+                        : "bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-700 dark:text-red-400"
+                    }`}
+                  >
+                    <option value="UP">UP</option>
+                    <option value="DOWN">DOWN</option>
+                  </select>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-zinc-500">$</span>
+                    <input
+                      type="number"
+                      value={manualAmount}
+                      onChange={(e) => setManualAmount(e.target.value)}
+                      placeholder="Amount"
+                      className="w-16 px-2 py-1 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded font-mono"
+                    />
+                  </div>
+                  <button
+                    onClick={handleManualOrder}
+                    disabled={manualOrderLoading}
+                    className="px-3 py-1 text-xs bg-blue-500/20 hover:bg-blue-500/30 text-blue-600 dark:text-blue-400 rounded disabled:opacity-50 transition-colors font-medium"
+                  >
+                    {manualOrderLoading ? "..." : "Place"}
+                  </button>
+                </div>
+                {manualOrderResult && (
+                  <div className={`text-xs mt-1 ${manualOrderResult.success ? "text-green-500" : "text-red-500"}`}>
+                    {manualOrderResult.success ? `✓ ${manualSymbol} ${manualSide} order placed!` : `✗ ${manualOrderResult.error}`}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           /* Paper Mode - Show simulated account stats */
@@ -620,13 +764,23 @@ function TradingCardComponent({
               </div>
             </div>
 
-            <button
-              onClick={onReset}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded transition-colors"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Reset Account
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={onReset}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-600 dark:text-zinc-400 rounded transition-colors"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Reset Account
+              </button>
+              <button
+                onClick={onFactoryReset}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded transition-colors"
+                title="Reset account AND all settings to defaults"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Factory Reset
+              </button>
+            </div>
           </div>
         )}
 

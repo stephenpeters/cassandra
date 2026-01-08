@@ -43,8 +43,11 @@ export interface UseWebSocketReturn {
   requestCandles: (symbol: string) => void;
   togglePaperTrading: () => Promise<void>;
   resetTradingAccount: () => Promise<void>;
+  factoryReset: () => Promise<void>;
   updatePaperConfig: (config: Partial<TradingConfig>) => Promise<void>;
   setTradingMode: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  placeTestOrder: (symbol: string, side: "UP" | "DOWN", amount: number, apiKey: string) => Promise<{ success: boolean; error?: string; order?: unknown }>;
+  setAllowances: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -291,6 +294,23 @@ export function useWebSocket(): UseWebSocketReturn {
     }
   }, []);
 
+  // Factory reset - resets both account AND config to defaults
+  const factoryReset = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/paper-trading/factory-reset`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTradingAccount(data.account);
+        setPaperConfig(data.config);
+        setTradingSignals([]);
+      }
+    } catch (e) {
+      console.error("Failed to factory reset paper trading:", e);
+    }
+  }, []);
+
   const updatePaperConfig = useCallback(
     async (config: Partial<TradingConfig>) => {
       try {
@@ -334,6 +354,70 @@ export function useWebSocket(): UseWebSocketReturn {
         }
       } catch (e) {
         console.error("Failed to set trading mode:", e);
+        return { success: false, error: "Network error" };
+      }
+    },
+    []
+  );
+
+  // Set token allowances for Polymarket (one-time setup)
+  const setAllowances = useCallback(
+    async (apiKey: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const res = await fetch(`${API_URL}/api/live-trading/allowances`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          return { success: true };
+        } else {
+          return { success: false, error: data.error || "Failed to set allowances" };
+        }
+      } catch (e) {
+        console.error("Failed to set allowances:", e);
+        return { success: false, error: "Network error" };
+      }
+    },
+    []
+  );
+
+  // Place a manual test order (for testing live trading)
+  const placeTestOrder = useCallback(
+    async (
+      symbol: string,
+      side: "UP" | "DOWN",
+      amount: number,
+      apiKey: string
+    ): Promise<{ success: boolean; error?: string; order?: unknown }> => {
+      try {
+        const res = await fetch(`${API_URL}/api/live-trading/test-order`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({
+            symbol,
+            side,
+            amount_usd: amount,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          return { success: true, order: data.order };
+        } else {
+          return { success: false, error: data.error || "Failed to place order" };
+        }
+      } catch (e) {
+        console.error("Failed to place test order:", e);
         return { success: false, error: "Network error" };
       }
     },
@@ -429,7 +513,10 @@ export function useWebSocket(): UseWebSocketReturn {
     requestCandles,
     togglePaperTrading,
     resetTradingAccount,
+    factoryReset,
     updatePaperConfig,
     setTradingMode,
+    placeTestOrder,
+    setAllowances,
   };
 }

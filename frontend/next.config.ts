@@ -2,7 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // Static export for self-hosted deployment
-  output: "export",
+  // NOTE: Disabled for dev mode - re-enable for production build
+  // output: "export",
 
   // Disable image optimization (not available in static export)
   images: {

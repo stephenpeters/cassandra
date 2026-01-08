@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SimpleStreamingChart } from "@/components/charts/SimpleStreamingChart";
 import { MarketAnalysis } from "@/components/charts/MarketAnalysis";
+import { IndicatorGauges } from "@/components/charts/IndicatorGauges";
 import type {
   Markets15MinData,
   MomentumSignal,
@@ -338,6 +339,14 @@ export function PolymarketDashboard({
             momentum={selectedMomentum}
             orderbook={selectedOrderbook}
           />
+
+          {/* Technical Indicator Gauges */}
+          <div>
+            <div className="text-xs font-medium text-zinc-500 mb-2">Indicator Gauges</div>
+            <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-3">
+              <IndicatorGauges momentum={selectedMomentum} />
+            </div>
+          </div>
 
           {/* Open Position */}
           <div>

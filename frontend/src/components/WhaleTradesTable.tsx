@@ -51,7 +51,7 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
             <TableHead className="text-zinc-400 w-20">Time</TableHead>
             <TableHead className="text-zinc-400 w-24">Whale</TableHead>
             <TableHead className="text-zinc-400">Market</TableHead>
-            <TableHead className="text-zinc-400 w-16 text-center">Pos</TableHead>
+            <TableHead className="text-zinc-400 w-16 text-center">Side</TableHead>
             <TableHead className="text-zinc-400 w-20 text-right">Size</TableHead>
             <TableHead className="text-zinc-400 w-20 text-right">Value</TableHead>
           </TableRow>

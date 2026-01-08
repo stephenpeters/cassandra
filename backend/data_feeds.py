@@ -518,9 +518,13 @@ class MomentumCalculator:
             elif vwap_diff_pct < -0.001:  # Price < VWAP by 0.1%
                 vwap_signal = "DOWN"
 
-        rsi = self.calculate_rsi(symbol)
-        adx = self.calculate_adx(symbol)
-        supertrend_direction, supertrend_value = self.calculate_supertrend(symbol)
+        # Use longer periods for more stable/predictive signals
+        # RSI-60 = 1 hour of 1-min candles (traditional RSI-14 is for daily bars)
+        # ADX-60 = 1 hour to identify meaningful trends, not noise
+        # Supertrend-30 = 30 min for stable trend bands
+        rsi = self.calculate_rsi(symbol, period=60)
+        adx = self.calculate_adx(symbol, period=60)
+        supertrend_direction, supertrend_value = self.calculate_supertrend(symbol, period=30)
 
         signal = MomentumSignal(
             symbol=symbol,

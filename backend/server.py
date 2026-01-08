@@ -20,10 +20,12 @@ import uvicorn
 import secrets
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file if present
-load_dotenv()
+# Load .env file from the same directory as server.py
+_backend_dir = Path(__file__).parent
+load_dotenv(_backend_dir / ".env")
 
 # =============================================================================
 # SECURITY: API Key Authentication
@@ -93,6 +95,14 @@ class OrderConfirmRequest(BaseModel):
 class OrderRejectRequest(BaseModel):
     order_id: str
     reason: str = "Manual rejection"
+
+
+class TestOrderRequest(BaseModel):
+    """Manual test order - for testing live trading"""
+    symbol: str = Field(..., pattern="^(BTC|ETH|SOL|XRP|DOGE)$")
+    side: str = Field(..., pattern="^(UP|DOWN)$")
+    amount_usd: float = Field(..., ge=1.0, le=500.0)  # $1-$500 for manual orders
+
 
 from config import (
     CryptoExchangeAPI,
@@ -504,7 +514,7 @@ async def shutdown():
 
     # Save paper trading state
     if paper_trading:
-        paper_trading.save_state()
+        paper_trading._save_state()
         print("[Server] Paper trading state saved")
 
     # Save historical markets
@@ -750,6 +760,36 @@ CHART_UPDATE_INTERVAL_SEC = int(os.getenv("CHART_UPDATE_INTERVAL_SEC", "3"))  # 
 # Chart data storage: { "SYMBOL_market_start": { "symbol": str, "start_price": float, "data": [...] } }
 _chart_data: dict[str, dict] = {}
 _last_chart_update: dict[str, int] = {}  # "SYMBOL" -> last update timestamp
+
+
+def fetch_binance_price_at_sync(symbol: str, timestamp: int) -> float | None:
+    """
+    Fetch the Binance price for a symbol at a specific timestamp.
+    Uses Binance klines API to get the 1-minute candle starting at the timestamp.
+    Returns the OPEN price of that candle (the price at market start).
+    """
+    import requests
+    binance_symbol = f"{symbol}USDT".upper()
+
+    try:
+        url = "https://api.binance.com/api/v3/klines"
+        params = {
+            "symbol": binance_symbol,
+            "interval": "1m",
+            "startTime": timestamp * 1000,
+            "limit": 1,
+        }
+        resp = requests.get(url, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data and len(data) > 0:
+                # Kline format: [open_time, open, high, low, close, ...]
+                # Use OPEN price (index 1) as the "price to beat" at market start
+                return float(data[0][1])
+    except Exception as e:
+        print(f"[Chart] Could not fetch historical price for {symbol} at {timestamp}: {e}", flush=True)
+
+    return None
 
 
 def get_chart_data_for_markets() -> dict[str, dict]:
@@ -1038,19 +1078,26 @@ async def paper_trading_loop():
                 if now - last_update >= CHART_UPDATE_INTERVAL_SEC:
                     # Track window if not already tracked (allows late joining)
                     if open_key not in _tracked_windows:
+                        # Fetch the actual price at market start from Binance history
+                        historical_open = fetch_binance_price_at_sync(symbol, market_start)
+                        actual_open_price = historical_open if historical_open else current_price
+
                         _tracked_windows[open_key] = {
                             "symbol": symbol,
                             "start": market_start,
                             "end": market_end,
-                            "open_price": current_price,  # Use current price as fallback
+                            "open_price": actual_open_price,
                         }
-                        print(f"[Chart] {symbol} late window join at ${current_price:.2f} (elapsed: {elapsed}s)", flush=True)
+                        if historical_open:
+                            print(f"[Chart] {symbol} late join: fetched historical open ${actual_open_price:.2f} (elapsed: {elapsed}s)", flush=True)
+                        else:
+                            print(f"[Chart] {symbol} late join: using current ${current_price:.2f} as fallback (elapsed: {elapsed}s)", flush=True)
 
                         # Also record for paper trading on late join (critical for latency strategy)
                         if paper_trading_active and open_key not in _recorded_opens:
-                            paper_trading.record_window_open(symbol, market_start, current_price)
+                            paper_trading.record_window_open(symbol, market_start, actual_open_price)
                             _recorded_opens.add(open_key)
-                            print(f"[PT] {symbol} late window open recorded: ${current_price:.2f}", flush=True)
+                            print(f"[PT] {symbol} late window open recorded: ${actual_open_price:.2f}", flush=True)
 
                     # Get start price from tracked windows
                     window_info = _tracked_windows.get(open_key, {})
@@ -1107,10 +1154,11 @@ async def paper_trading_loop():
                     # LIVE TRADING: Send order to Polymarket if in live mode
                     # =========================================================
                     if live_trading and paper_trading.trading_mode == "live":
-                        # Get token_id from active markets
+                        # Get token_ids from active markets
                         active_markets = polymarket_feed.get_active_markets() if polymarket_feed else {}
                         market_info = active_markets.get(symbol, {})
                         up_token_id = market_info.get("up_token_id") or market_info.get("token_id", "")
+                        down_token_id = market_info.get("down_token_id", "")
 
                         if up_token_id:
                             try:
@@ -1118,6 +1166,7 @@ async def paper_trading_loop():
                                     signal=signal,
                                     token_id=up_token_id,
                                     current_price=polymarket_up_price,
+                                    down_token_id=down_token_id,
                                 )
                                 if order:
                                     print(f"[LIVE] {symbol} ORDER PLACED: {order.id} | "
@@ -1808,6 +1857,20 @@ async def reset_paper_account():
     return {"status": "ok", "account": paper_trading.get_account_summary()}
 
 
+@app.post("/api/paper-trading/factory-reset")
+async def factory_reset_paper_trading():
+    """Reset paper trading to factory defaults (account + all settings)"""
+    if not paper_trading:
+        return {"error": "Paper trading not initialized"}
+
+    paper_trading.reset_to_defaults()
+    return {
+        "status": "ok",
+        "account": paper_trading.get_account_summary(),
+        "config": paper_trading.get_config(),
+    }
+
+
 @app.get("/api/paper-trading/positions")
 async def get_paper_positions():
     """Get open paper trading positions"""
@@ -1883,6 +1946,8 @@ async def set_trading_mode(
     if not live_trading:
         return {"error": "Live trading not initialized"}
 
+    allowance_warning = None
+
     # Safety checks for live mode
     if request.mode == "live":
         if not CLOB_AVAILABLE:
@@ -1895,13 +1960,10 @@ async def set_trading_mode(
         if not clob_ok:
             return JSONResponse({"error": f"Failed to initialize CLOB: {clob_msg}"}, status_code=400)
 
-        # Check token allowances are set (per Polymarket best practices)
+        # Check token allowances - warn but don't block (user can set after entering live mode)
         is_approved, message, _ = live_trading.check_token_allowances()
         if not is_approved:
-            return JSONResponse({
-                "error": f"Token allowances not set: {message}. "
-                         "Call POST /api/live-trading/allowances first."
-            }, status_code=400)
+            allowance_warning = f"Token allowances not set. You must set allowances before placing orders."
 
     live_trading.set_mode(request.mode)
 
@@ -1915,7 +1977,10 @@ async def set_trading_mode(
         "data": live_trading.get_status(),
     })
 
-    return {"status": "ok", "mode": request.mode}
+    response = {"status": "ok", "mode": request.mode}
+    if request.mode == "live" and allowance_warning:
+        response["warning"] = allowance_warning
+    return response
 
 
 @app.post("/api/live-trading/kill-switch")
@@ -1969,6 +2034,31 @@ async def reset_circuit_breaker(_: str = Depends(verify_api_key)):
     live_trading.circuit_breaker.reason = ""
     live_trading._save_state()
     return {"status": "ok", "circuit_breaker": live_trading.circuit_breaker.to_dict()}
+
+
+@app.post("/api/live-trading/refresh-credentials")
+async def refresh_api_credentials(_: str = Depends(verify_api_key)):
+    """
+    Refresh Polymarket API credentials.
+    Call this if getting 'invalid signature' errors (requires API key).
+    """
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    if not live_trading.clob_client:
+        # Try to initialize first
+        ok, msg = live_trading.ensure_clob_initialized()
+        if not ok:
+            return {"error": f"CLOB not available: {msg}"}
+
+    success = live_trading.refresh_api_credentials()
+    if success:
+        return {"status": "ok", "message": "API credentials refreshed successfully"}
+    else:
+        return JSONResponse(
+            {"error": "Failed to refresh credentials - check logs"},
+            status_code=500
+        )
 
 
 @app.post("/api/live-trading/enabled-assets")
@@ -2050,6 +2140,114 @@ async def set_allowances(_: str = Depends(verify_api_key)):
         return JSONResponse({"error": message}, status_code=400)
 
     return {"status": "ok", "message": message}
+
+
+@app.post("/api/live-trading/test-order")
+async def place_test_order(
+    request: TestOrderRequest,
+    _: str = Depends(verify_api_key)
+):
+    """
+    Place a manual test order (requires API key).
+
+    Use this to test if live trading is working.
+    Amount is limited to $1-$100 for safety.
+    """
+    if not live_trading:
+        return JSONResponse({"error": "Live trading not initialized"}, status_code=400)
+
+    if live_trading.config.mode.value != "live":
+        return JSONResponse({"error": "Not in live mode - switch to live mode first"}, status_code=400)
+
+    # Initialize CLOB if needed
+    clob_ok, clob_msg = live_trading.ensure_clob_initialized()
+    if not clob_ok:
+        return JSONResponse({"error": f"CLOB not available: {clob_msg}"}, status_code=400)
+
+    # Get current active market for the symbol
+    if not polymarket_feed:
+        return JSONResponse({"error": "Polymarket feed not available"}, status_code=400)
+
+    active_markets = polymarket_feed.get_active_markets()
+    market_info = active_markets.get(request.symbol)
+
+    if not market_info:
+        return JSONResponse({"error": f"No active market for {request.symbol}"}, status_code=400)
+
+    # Get the token_id based on side
+    token_id = market_info.get("up_token_id" if request.side == "UP" else "down_token_id")
+    if not token_id:
+        return JSONResponse({"error": f"Token ID not found for {request.symbol} {request.side}"}, status_code=400)
+
+    # Create the order
+    from live_trading import LiveOrder
+    import time
+    import uuid
+
+    order = LiveOrder(
+        id=f"test-{uuid.uuid4().hex[:8]}",
+        symbol=request.symbol,
+        side=request.side,
+        direction="BUY",  # Test orders are always buys
+        token_id=token_id,
+        size_usd=request.amount_usd,
+        price=0.50,  # Market order at ~50%
+        order_type="FOK",  # Fill-or-kill for immediate execution
+        status="pending",
+        created_at=int(time.time()),
+    )
+
+    # Execute the order
+    try:
+        await live_trading._execute_order(order)
+        live_trading.order_history.append(order)
+
+        # Check if order actually succeeded
+        if order.status == "failed":
+            live_trading._save_state()
+            return JSONResponse({
+                "error": order.error or "Order execution failed",
+                "order": order.to_dict()
+            }, status_code=400)
+
+        # Create a position to track this order
+        from live_trading import LivePosition
+
+        # Get market timing from active market
+        market_start = market_info.get("market_start", int(time.time()))
+        market_end = market_info.get("market_end", market_start + 900)  # 15 min default
+
+        # Calculate fill details
+        fill_price = order.fill_price or 0.50
+        size = (request.amount_usd / fill_price) if fill_price > 0 else 0
+
+        position = LivePosition(
+            symbol=request.symbol,
+            side=request.side,
+            token_id=token_id,
+            size=size,
+            avg_entry_price=fill_price,
+            cost_basis_usd=request.amount_usd,
+            market_start=market_start,
+            market_end=market_end,
+            entry_orders=[order.id],
+        )
+        live_trading.open_positions.append(position)
+        live_trading._save_state()
+
+        logger.info(f"[LiveTrading] Created position: {request.symbol} {request.side} ${request.amount_usd}")
+
+        return {
+            "status": "ok",
+            "order": order.to_dict(),
+            "position": position.to_dict(),
+            "message": f"Test order placed: {request.symbol} {request.side} ${request.amount_usd}"
+        }
+    except Exception as e:
+        return JSONResponse({
+            "error": str(e),
+            "order": order.to_dict() if order else None
+        }, status_code=500)
 
 
 @app.post("/api/live-trading/confirm-order")

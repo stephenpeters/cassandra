@@ -1,15 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Sliders, TrendingUp, TrendingDown, Activity } from "lucide-react";
+import { X, Sliders, TrendingUp, TrendingDown, Activity, AlertTriangle } from "lucide-react";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
-import type { TradingConfig } from "@/types";
+import type { TradingConfig, LiveTradingStatus } from "@/types";
 
 interface StrategySettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   config: TradingConfig | null;
   onConfigUpdate: (config: Partial<TradingConfig>) => void;
+  liveStatus?: LiveTradingStatus | null;
+  onTestOrder?: (symbol: string, side: "UP" | "DOWN", amount: number, apiKey: string) => Promise<{ success: boolean; error?: string; order?: unknown }>;
+  onSetAllowances?: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 interface IndicatorConfig {
@@ -69,8 +72,30 @@ export function StrategySettingsModal({
   onClose,
   config,
   onConfigUpdate,
+  liveStatus,
+  onTestOrder,
+  onSetAllowances,
 }: StrategySettingsModalProps) {
   const [localConfig, setLocalConfig] = useState<Partial<TradingConfig>>({});
+
+  // Manual order state
+  const [testSymbol, setTestSymbol] = useState<"BTC" | "ETH" | "SOL">("BTC");
+  const [testSide, setTestSide] = useState<"UP" | "DOWN">("UP");
+  const [testAmount, setTestAmount] = useState(5);
+  const [testOrderLoading, setTestOrderLoading] = useState(false);
+  const [testOrderResult, setTestOrderResult] = useState<{ success: boolean; error?: string } | null>(null);
+
+  // Allowances state
+  const [allowancesLoading, setAllowancesLoading] = useState(false);
+  const [allowancesResult, setAllowancesResult] = useState<{ success: boolean; error?: string } | null>(null);
+
+  // API key from localStorage
+  const [apiKey, setApiKey] = useState("");
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem("predmkt_api_key");
+    if (savedKey) setApiKey(savedKey);
+  }, [isOpen]);
 
   useEffect(() => {
     if (config) {
@@ -111,6 +136,48 @@ export function StrategySettingsModal({
   const handleToggle = (key: keyof TradingConfig) => {
     setLocalConfig({ ...localConfig, [key]: !localConfig[key] });
   };
+
+  // Handle test order
+  const handleTestOrder = async () => {
+    if (!onTestOrder || !apiKey) return;
+
+    setTestOrderLoading(true);
+    setTestOrderResult(null);
+
+    try {
+      const result = await onTestOrder(testSymbol, testSide, testAmount, apiKey);
+      setTestOrderResult(result);
+      if (result.success) {
+        setTimeout(() => setTestOrderResult(null), 5000);
+      }
+    } catch {
+      setTestOrderResult({ success: false, error: "Unexpected error" });
+    } finally {
+      setTestOrderLoading(false);
+    }
+  };
+
+  // Handle setting allowances
+  const handleSetAllowances = async () => {
+    if (!onSetAllowances || !apiKey) return;
+
+    setAllowancesLoading(true);
+    setAllowancesResult(null);
+
+    try {
+      const result = await onSetAllowances(apiKey);
+      setAllowancesResult(result);
+      if (result.success) {
+        setTimeout(() => setAllowancesResult(null), 5000);
+      }
+    } catch {
+      setAllowancesResult({ success: false, error: "Unexpected error" });
+    } finally {
+      setAllowancesLoading(false);
+    }
+  };
+
+  const isLiveMode = liveStatus?.mode === "live";
 
   // Count enabled indicators
   const enabledCount = INDICATORS.filter(
@@ -510,6 +577,156 @@ export function StrategySettingsModal({
               </div>
             </div>
           </div>
+
+          {/* Live Trading Tools - Only shown when in live mode */}
+          {isLiveMode && (onTestOrder || onSetAllowances) && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-red-600 dark:text-red-400 border-b border-red-200 dark:border-red-800 pb-1 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                Live Trading Tools
+              </h3>
+
+              <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/20">
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  <strong>WARNING:</strong> These controls execute real trades with real money.
+                  Use with extreme caution.
+                </p>
+              </div>
+
+              {/* Set Token Allowances */}
+              {onSetAllowances && (
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Token Allowances</span>
+                    <InfoTooltip content="One-time setup: Approves USDC and conditional tokens for Polymarket exchange contracts. Required before your first trade. Costs a small amount of MATIC for gas." />
+                  </div>
+                  <button
+                    onClick={handleSetAllowances}
+                    disabled={allowancesLoading || !apiKey}
+                    className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {allowancesLoading ? "Setting Allowances..." : "🔓 Set Token Allowances (One-Time)"}
+                  </button>
+                  <p className="text-[10px] text-zinc-500">
+                    Required once per wallet before first trade.
+                  </p>
+                  {allowancesResult && (
+                    <div className={`p-2 rounded text-sm ${
+                      allowancesResult.success
+                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                    }`}>
+                      {allowancesResult.success
+                        ? "✓ Allowances set successfully!"
+                        : `✗ ${allowancesResult.error || "Failed to set allowances"}`
+                      }
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Manual Test Order */}
+              {onTestOrder && (
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Manual Test Order</span>
+                    <InfoTooltip content="Place a small test order to verify your live trading setup is working. Limited to $1-$100 for safety." />
+                  </div>
+
+                  {/* Symbol Selection */}
+                  <div>
+                    <label className="text-xs text-zinc-500 block mb-1">Symbol</label>
+                    <div className="flex gap-2">
+                      {(["BTC", "ETH", "SOL"] as const).map((sym) => (
+                        <button
+                          key={sym}
+                          onClick={() => setTestSymbol(sym)}
+                          className={`flex-1 px-3 py-1.5 text-sm rounded transition-colors ${
+                            testSymbol === sym
+                              ? "bg-amber-500 text-white"
+                              : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                          }`}
+                        >
+                          {sym}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Side Selection */}
+                  <div>
+                    <label className="text-xs text-zinc-500 block mb-1">Side</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setTestSide("UP")}
+                        className={`flex-1 px-3 py-1.5 text-sm rounded transition-colors ${
+                          testSide === "UP"
+                            ? "bg-green-500 text-white"
+                            : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                        }`}
+                      >
+                        ▲ UP
+                      </button>
+                      <button
+                        onClick={() => setTestSide("DOWN")}
+                        className={`flex-1 px-3 py-1.5 text-sm rounded transition-colors ${
+                          testSide === "DOWN"
+                            ? "bg-red-500 text-white"
+                            : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                        }`}
+                      >
+                        ▼ DOWN
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Amount */}
+                  <div>
+                    <label className="text-xs text-zinc-500 block mb-1">Amount (USD)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value={testAmount}
+                      onChange={(e) => setTestAmount(Math.min(100, Math.max(1, parseInt(e.target.value) || 1)))}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded text-sm font-mono"
+                    />
+                    <div className="text-[10px] text-zinc-400 mt-1">Min: $1, Max: $100</div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <button
+                    onClick={handleTestOrder}
+                    disabled={testOrderLoading || !apiKey}
+                    className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {testOrderLoading ? "Placing Order..." : `Place ${testSide} Order for $${testAmount}`}
+                  </button>
+
+                  {!apiKey && (
+                    <div className="text-xs text-amber-600 dark:text-amber-400">
+                      API key required. Switch to live mode from the trading card first.
+                    </div>
+                  )}
+
+                  {/* Result */}
+                  {testOrderResult && (
+                    <div className={`p-2 rounded text-sm ${
+                      testOrderResult.success
+                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                    }`}>
+                      {testOrderResult.success
+                        ? "✓ Order placed successfully!"
+                        : `✗ ${testOrderResult.error || "Failed to place order"}`
+                      }
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

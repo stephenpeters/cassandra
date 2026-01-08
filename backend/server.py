@@ -7,6 +7,7 @@ Provides real-time data feeds to the frontend.
 import asyncio
 import json
 import signal
+import time
 from datetime import datetime
 from typing import Set
 
@@ -128,6 +129,7 @@ from live_trading import (
     CLOB_AVAILABLE,
 )
 from trade_ledger import TradeLedger
+from market_data_store import MarketDataStore, PriceSnapshot, MarketTradeRecord
 from whale_following import (
     WhaleFollowingStrategy,
     WhaleFollowConfig,
@@ -296,6 +298,10 @@ async def startup():
     # Initialize trade ledger for persistent storage
     trade_ledger = TradeLedger(db_path="trades.db")
     print(f"[Server] Trade ledger initialized: trades.db")
+
+    # Initialize market data store for rolling 24-hour data
+    market_data_store = MarketDataStore(db_path="market_data.db")
+    print(f"[Server] Market data store initialized: market_data.db")
 
     # Initialize live trading engine FIRST
     # This creates its internal paper_engine which we'll use as the shared instance
@@ -492,6 +498,9 @@ async def startup():
     # Start connection health monitoring loop
     background_tasks.append(asyncio.create_task(connection_health_loop()))
 
+    # Start market data snapshot collection loop (V2)
+    background_tasks.append(asyncio.create_task(snapshot_collection_loop()))
+
     print("[Server] Started all data feeds")
 
 
@@ -618,6 +627,62 @@ async def connection_health_loop():
 
         except Exception as e:
             print(f"[HealthCheck] Error in health check loop: {e}", flush=True)
+
+
+async def snapshot_collection_loop():
+    """
+    Collect price snapshots every 30 seconds for rolling 24-hour storage.
+
+    V2 Phase 3: Data collection for historical analysis.
+    """
+    SYMBOLS = ["BTC", "ETH", "SOL"]
+
+    while True:
+        await asyncio.sleep(30)  # Every 30 seconds
+
+        if not polymarket_feed or not binance_feed or not market_data_store:
+            continue
+
+        try:
+            now = int(time.time())
+            timing = polymarket_feed.get_next_market_time()
+
+            # Only collect during active market windows
+            if not timing.get("is_open"):
+                continue
+
+            for symbol in SYMBOLS:
+                market = polymarket_feed.active_markets.get(symbol)
+                if not market:
+                    continue
+
+                # Get current Binance price
+                binance_price = binance_feed.get_current_price(f"{symbol}USDT")
+                if not binance_price:
+                    continue
+
+                # Get momentum data for volume/orderbook
+                momo = momentum_calc.get_signal(f"{symbol}USDT") if momentum_calc else None
+
+                # Create snapshot
+                snapshot = PriceSnapshot(
+                    id=f"{symbol}_{now}",
+                    timestamp=now,
+                    symbol=symbol,
+                    binance_price=binance_price,
+                    pm_up_price=market.price,
+                    pm_down_price=1.0 - market.price,
+                    market_start=market.start_time,
+                    market_end=market.end_time,
+                    elapsed_sec=now - market.start_time,
+                    volume_delta_usd=momo.get("volume_delta", 0) if momo else None,
+                    orderbook_imbalance=momo.get("orderbook_imbalance", 0) if momo else None,
+                )
+
+                market_data_store.record_snapshot(snapshot)
+
+        except Exception as e:
+            print(f"[Snapshot] Error collecting snapshots: {e}", flush=True)
 
 
 _markets_loop_counter = 0
@@ -1923,6 +1988,126 @@ async def get_available_markets():
         "timeframes": list(MARKET_TIMEFRAMES.keys()),
         "availability": available,
     }
+
+
+# ============================================================================
+# HISTORY/DATA ENDPOINTS (V2 Phase 3)
+# ============================================================================
+
+@app.get("/api/history/snapshots")
+async def get_history_snapshots(
+    symbol: Optional[str] = None,
+    market_start: Optional[int] = None,
+    since: Optional[int] = None,
+    until: Optional[int] = None,
+    limit: int = 100,
+):
+    """
+    Get price snapshots for historical analysis.
+
+    Args:
+        symbol: Filter by symbol (BTC, ETH, SOL)
+        market_start: Filter by specific 15-min market window
+        since: Filter after this Unix timestamp
+        until: Filter before this Unix timestamp
+        limit: Max results (default 100, max 1000)
+
+    Returns:
+        List of price snapshots with Binance and Polymarket prices.
+    """
+    if not market_data_store:
+        return {"error": "Market data store not initialized", "snapshots": []}
+
+    limit = min(limit, 1000)
+    snapshots = market_data_store.get_snapshots(
+        symbol=symbol,
+        market_start=market_start,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+
+    return {
+        "snapshots": [s.to_dict() for s in snapshots],
+        "count": len(snapshots),
+    }
+
+
+@app.get("/api/history/trades")
+async def get_history_trades(
+    symbol: Optional[str] = None,
+    market_start: Optional[int] = None,
+    side: Optional[str] = None,
+    min_usd: Optional[float] = None,
+    since: Optional[int] = None,
+    until: Optional[int] = None,
+    limit: int = 100,
+):
+    """
+    Get market trades for historical analysis.
+
+    Args:
+        symbol: Filter by symbol (BTC, ETH, SOL)
+        market_start: Filter by specific 15-min market window
+        side: Filter by "UP" or "DOWN"
+        min_usd: Minimum trade size in USD
+        since: Filter after this Unix timestamp
+        until: Filter before this Unix timestamp
+        limit: Max results (default 100, max 1000)
+
+    Returns:
+        List of market trades.
+    """
+    if not market_data_store:
+        return {"error": "Market data store not initialized", "trades": []}
+
+    limit = min(limit, 1000)
+    trades = market_data_store.get_trades(
+        symbol=symbol,
+        market_start=market_start,
+        side=side,
+        min_usd=min_usd,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+
+    return {
+        "trades": [t.to_dict() for t in trades],
+        "count": len(trades),
+    }
+
+
+@app.get("/api/history/market-analysis/{market_start}")
+async def get_market_analysis(market_start: int, symbol: str = "BTC"):
+    """
+    Get analysis for a specific market window.
+
+    Args:
+        market_start: The 15-min window start timestamp
+        symbol: Symbol to analyze (default BTC)
+
+    Returns:
+        Analysis with price evolution, trade volume, etc.
+    """
+    if not market_data_store:
+        return {"error": "Market data store not initialized"}
+
+    return market_data_store.get_market_analysis(market_start=market_start, symbol=symbol)
+
+
+@app.get("/api/history/stats")
+async def get_history_stats():
+    """
+    Get market data store statistics.
+
+    Returns:
+        Snapshot count, trade count, time range, etc.
+    """
+    if not market_data_store:
+        return {"error": "Market data store not initialized"}
+
+    return market_data_store.get_stats()
 
 
 # ============================================================================

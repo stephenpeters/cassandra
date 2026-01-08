@@ -1,10 +1,28 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Settings } from "lucide-react";
+import { X, Settings, Check, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { SimpleTooltip } from "@/components/ui/tooltip";
 import type { TradingConfig } from "@/types";
+
+// Market timeframes - 15m is active, others planned
+const MARKET_TIMEFRAMES = [
+  { id: "15m", label: "15 Min", active: true, description: "Currently available" },
+  { id: "1h", label: "1 Hour", active: false, description: "Coming soon" },
+  { id: "4h", label: "4 Hour", active: false, description: "Coming soon" },
+  { id: "1d", label: "Daily", active: false, description: "Coming soon" },
+];
+
+// Available symbols with volume tiers
+const MARKET_SYMBOLS = [
+  { symbol: "BTC", tier: "primary", volume: "165K", recommended: true },
+  { symbol: "ETH", tier: "primary", volume: "52K", recommended: true },
+  { symbol: "SOL", tier: "secondary", volume: "15K", recommended: false },
+  { symbol: "XRP", tier: "secondary", volume: "8K", recommended: false },
+  { symbol: "DOGE", tier: "secondary", volume: "5K", recommended: false },
+];
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -107,40 +125,79 @@ export function SettingsModal({ isOpen, onClose, config, onConfigUpdate }: Setti
             </p>
           </div>
 
-          {/* Section 1: What to Trade */}
+          {/* Section 1: Market Grid (Symbol x Timeframe) */}
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 border-b border-zinc-200 dark:border-zinc-700 pb-1">
-              What to Trade
+              Markets
             </h3>
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm font-medium">Enabled Assets</span>
-                <InfoTooltip content="Select which assets to trade. Only selected assets will generate signals." />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { symbol: "BTC", liquidity: "High", recommended: true },
-                  { symbol: "ETH", liquidity: "Medium", recommended: true },
-                  { symbol: "SOL", liquidity: "Low", recommended: false },
-                ].map(({ symbol, liquidity, recommended }) => (
-                  <button
-                    key={symbol}
-                    onClick={() => handleAssetToggle(symbol)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      (localConfig.enabled_assets || []).includes(symbol)
-                        ? "bg-purple-500 text-white"
-                        : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400"
-                    }`}
-                  >
-                    {symbol}
-                    <span className="ml-1 text-[10px] opacity-70">({liquidity})</span>
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] text-zinc-500 mt-1">
-                BTC/ETH recommended. Lower liquidity assets may have higher slippage.
-              </p>
+            <p className="text-xs text-zinc-500">
+              Select which markets to trade. Green = enabled. Grey = coming soon.
+            </p>
+
+            {/* Market Grid */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr>
+                    <th className="text-left py-1 px-2 text-zinc-500">Symbol</th>
+                    {MARKET_TIMEFRAMES.map((tf) => (
+                      <th key={tf.id} className="text-center py-1 px-2">
+                        <SimpleTooltip content={tf.description}>
+                          <span className={tf.active ? "text-zinc-700 dark:text-zinc-300" : "text-zinc-400"}>
+                            {tf.label}
+                          </span>
+                        </SimpleTooltip>
+                      </th>
+                    ))}
+                    <th className="text-right py-1 px-2 text-zinc-500">Vol/24h</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {MARKET_SYMBOLS.map(({ symbol, tier, volume, recommended }) => (
+                    <tr key={symbol} className="border-t border-zinc-200 dark:border-zinc-700">
+                      <td className="py-2 px-2">
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">{symbol}</span>
+                          {recommended && (
+                            <Badge className="text-[9px] bg-green-500/20 text-green-500">rec</Badge>
+                          )}
+                        </div>
+                      </td>
+                      {MARKET_TIMEFRAMES.map((tf) => (
+                        <td key={tf.id} className="text-center py-2 px-2">
+                          {tf.active ? (
+                            <button
+                              onClick={() => handleAssetToggle(symbol)}
+                              className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
+                                (localConfig.enabled_assets || []).includes(symbol)
+                                  ? "bg-green-500 text-white"
+                                  : "bg-zinc-200 dark:bg-zinc-700 text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                              }`}
+                            >
+                              {(localConfig.enabled_assets || []).includes(symbol) ? (
+                                <Check className="w-3 h-3" />
+                              ) : null}
+                            </button>
+                          ) : (
+                            <SimpleTooltip content="Coming soon - not yet on Polymarket">
+                              <div className="w-6 h-6 rounded bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center cursor-not-allowed">
+                                <Clock className="w-3 h-3 text-zinc-400" />
+                              </div>
+                            </SimpleTooltip>
+                          )}
+                        </td>
+                      ))}
+                      <td className="text-right py-2 px-2 text-zinc-500 font-mono">
+                        ${volume}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+            <p className="text-[10px] text-zinc-500">
+              Higher volume = tighter spreads. BTC/ETH recommended for best execution.
+            </p>
           </div>
 
           {/* Section 2: When to Trade */}

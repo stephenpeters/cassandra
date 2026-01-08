@@ -8,6 +8,7 @@ import asyncio
 import json
 import signal
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Set
 
@@ -160,6 +161,27 @@ from time_sync import (
 )
 
 # ============================================================================
+# LIFESPAN CONTEXT MANAGER (replaces deprecated on_event)
+# ============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for FastAPI.
+
+    Replaces deprecated @app.on_event("startup") and @app.on_event("shutdown").
+    Startup logic runs before yield, shutdown logic runs after yield.
+    """
+    # ========== STARTUP ==========
+    await _startup()
+
+    yield  # App is running
+
+    # ========== SHUTDOWN ==========
+    await _shutdown()
+
+
+# ============================================================================
 # FASTAPI APP
 # ============================================================================
 
@@ -167,6 +189,7 @@ app = FastAPI(
     title="Polymarket Whale Tracker API",
     description="Real-time crypto prices, whale trades, and momentum signals",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS - Restrict to known origins
@@ -191,6 +214,7 @@ polymarket_feed: Polymarket15MinFeed = None
 paper_trading: TradingEngine = None
 live_trading: LiveTradingEngine = None
 trade_ledger: TradeLedger = None
+market_data_store: MarketDataStore = None  # Rolling 24-hour data storage (V2)
 whale_detector: WhaleTradeDetector = None
 whale_ws_detector: WhaleWebSocketDetector = None  # WebSocket-based whale detection (~5-15s latency)
 pm_ws_client: PMWebSocketClient = None  # Real-time Polymarket prices (replaces 2s polling)
@@ -244,10 +268,9 @@ async def prefill_historical_candles():
     print("[Server] Historical candles loaded")
 
 
-@app.on_event("startup")
-async def startup():
+async def _startup():
     """Initialize data feeds on startup"""
-    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading, trade_ledger, live_trading, whale_detector, whale_ws_detector, pm_ws_client
+    global binance_feed, whale_tracker, momentum_calc, polymarket_feed, paper_trading, trade_ledger, market_data_store, live_trading, whale_detector, whale_ws_detector, pm_ws_client
 
     # Initialize Binance feed with crypto symbols
     symbols = [v["binance"] for v in CryptoExchangeAPI.SYMBOLS.values()]
@@ -552,8 +575,7 @@ async def startup():
     print("[Server] Started all data feeds")
 
 
-@app.on_event("shutdown")
-async def shutdown():
+async def _shutdown():
     """
     Clean up on shutdown with graceful trading halt.
 

@@ -174,9 +174,9 @@ class TestOrderProcessing:
     @pytest.mark.asyncio
     async def test_hold_signal_no_order(self, live_trading_engine):
         """Test HOLD signal doesn't create order."""
+        # CheckpointSignal doesn't have 'slug' - uses market_start to generate slug
         signal = CheckpointSignal(
             symbol="BTC",
-            slug="btc-updown-15m-123",
             checkpoint="7m30s",
             timestamp=int(time.time()),
             signal=SignalType.HOLD,
@@ -185,6 +185,7 @@ class TestOrderProcessing:
             edge=0.0,
             confidence=0.5,
             momentum={},
+            market_start=int(time.time()) - 450,  # Generate slug from this
         )
 
         order = await live_trading_engine.process_signal(
@@ -309,12 +310,13 @@ class TestPositionManagement:
         )
         live_trading_engine.open_positions.append(position)
 
-        # Resolve with UP (win)
+        # Resolve with UP (win) - resolution is required parameter
         await live_trading_engine.resolve_position(
             symbol="BTC",
             market_start=position.market_start,
+            resolution="UP",  # Required - the market outcome
             binance_open=91000,
-            binance_close=92000,  # UP
+            binance_close=92000,
         )
 
         assert len(live_trading_engine.open_positions) == 0
@@ -332,11 +334,13 @@ class TestStatePersistence:
         # Save
         live_trading_engine._save_state()
 
-        # Load into new engine
+        # Load into new engine - LiveTradingEngine constructor uses:
+        # private_key, config, data_dir, ledger (no paper_engine or state_path)
         new_engine = LiveTradingEngine(
+            private_key=None,
             config=live_trading_engine.config,
-            paper_engine=live_trading_engine.paper_engine,
-            state_path=live_trading_engine._get_state_path(),
+            data_dir=live_trading_engine.data_dir,
+            ledger=None,
         )
 
         assert new_engine.kill_switch_active is True

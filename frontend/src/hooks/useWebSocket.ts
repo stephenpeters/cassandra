@@ -48,6 +48,8 @@ export interface UseWebSocketReturn {
   setTradingMode: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
   placeTestOrder: (symbol: string, side: "UP" | "DOWN", amount: number, apiKey: string) => Promise<{ success: boolean; error?: string; order?: unknown }>;
   setAllowances: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  activateKillSwitch: (reason: string, apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  deactivateKillSwitch: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -424,6 +426,64 @@ export function useWebSocket(): UseWebSocketReturn {
     []
   );
 
+  // Activate kill switch (emergency halt)
+  const activateKillSwitch = useCallback(
+    async (reason: string, apiKey: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const res = await fetch(`${API_URL}/api/live-trading/kill-switch`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({ activate: true, reason }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          setLiveStatus((prev) => prev ? { ...prev, kill_switch_active: true } : null);
+          return { success: true };
+        } else {
+          return { success: false, error: data.error || "Failed to activate kill switch" };
+        }
+      } catch (e) {
+        console.error("Failed to activate kill switch:", e);
+        return { success: false, error: "Network error" };
+      }
+    },
+    []
+  );
+
+  // Deactivate kill switch
+  const deactivateKillSwitch = useCallback(
+    async (apiKey: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const res = await fetch(`${API_URL}/api/live-trading/kill-switch`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({ activate: false, reason: "Manual deactivation" }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          setLiveStatus((prev) => prev ? { ...prev, kill_switch_active: false } : null);
+          return { success: true };
+        } else {
+          return { success: false, error: data.error || "Failed to deactivate kill switch" };
+        }
+      } catch (e) {
+        console.error("Failed to deactivate kill switch:", e);
+        return { success: false, error: "Network error" };
+      }
+    },
+    []
+  );
+
   // Initial connection
   useEffect(() => {
     connect();
@@ -518,5 +578,7 @@ export function useWebSocket(): UseWebSocketReturn {
     setTradingMode,
     placeTestOrder,
     setAllowances,
+    activateKillSwitch,
+    deactivateKillSwitch,
   };
 }

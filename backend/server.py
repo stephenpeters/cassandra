@@ -297,8 +297,23 @@ async def startup():
     trade_ledger = TradeLedger(db_path="trades.db")
     print(f"[Server] Trade ledger initialized: trades.db")
 
-    # Initialize paper trading engine
-    paper_trading = TradingEngine(data_dir=".", ledger=trade_ledger)
+    # Initialize live trading engine FIRST
+    # This creates its internal paper_engine which we'll use as the shared instance
+    # IMPORTANT: This eliminates the dual-engine state drift bug
+    private_key = os.getenv("POLYMARKET_PRIVATE_KEY")
+    live_config = LiveTradingConfig.from_env()
+    live_trading = LiveTradingEngine(
+        private_key=private_key,
+        config=live_config,
+        data_dir=".",
+        ledger=trade_ledger,
+    )
+
+    # Use live_trading's internal paper_engine as the shared paper trading instance
+    # This ensures signals and positions are synchronized with live order execution
+    paper_trading = live_trading.paper_engine
+
+    # Set up paper trading callbacks for broadcasting
     paper_trading.on_signal = lambda sig: asyncio.create_task(
         broadcast({"type": "paper_signal", "data": sig.to_dict()})
     )
@@ -308,16 +323,8 @@ async def startup():
     paper_trading.on_position_open = lambda pos: asyncio.create_task(
         broadcast({"type": "paper_position", "data": pos.to_dict()})
     )
-
-    # Initialize live trading engine
-    # Private key loaded from environment for security
-    private_key = os.getenv("POLYMARKET_PRIVATE_KEY")
-    live_config = LiveTradingConfig.from_env()
-    live_trading = LiveTradingEngine(
-        private_key=private_key,
-        config=live_config,
-        data_dir=".",
-        ledger=trade_ledger,
+    paper_trading.on_alert = lambda title, msg: asyncio.create_task(
+        live_trading._send_alert(title, msg)
     )
 
     # Set up live trading callbacks
@@ -331,13 +338,7 @@ async def startup():
         broadcast({"type": "live_alert", "data": {"title": title, "message": msg}})
     )
 
-    # Wire up paper trading alerts to use live trading's alert system
-    paper_trading.on_alert = lambda title, msg: asyncio.create_task(
-        live_trading._send_alert(title, msg)
-    )
-
-    # Sync trading mode to paper trading engine
-    paper_trading.trading_mode = live_trading.config.mode.value
+    # Trading mode is controlled by live_trading.config.mode
     print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
 
     # Initialize whale trade detector

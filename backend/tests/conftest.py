@@ -73,14 +73,14 @@ def mock_paper_engine(trading_config):
 
 
 @pytest.fixture
-def live_trading_engine(live_trading_config, mock_paper_engine, tmp_path):
+def live_trading_engine(live_trading_config, tmp_path):
     """Create a test live trading engine."""
-    # LiveTradingEngine constructor
+    # LiveTradingEngine creates its own paper_engine internally
     engine = LiveTradingEngine(
-        config=live_trading_config,
-        paper_engine=mock_paper_engine,
         private_key=None,  # No real trades
+        config=live_trading_config,
         data_dir=str(tmp_path),
+        ledger=None,
     )
     return engine
 
@@ -88,9 +88,9 @@ def live_trading_engine(live_trading_config, mock_paper_engine, tmp_path):
 @pytest.fixture
 def sample_signal():
     """Create a sample trading signal."""
+    # CheckpointSignal doesn't have 'slug' field - generates slug in to_dict() from market_start
     return CheckpointSignal(
         symbol="BTC",
-        slug="btc-updown-15m-1767812400",
         checkpoint="7m30s",
         timestamp=1767812400,
         signal=SignalType.BUY_UP,
@@ -105,18 +105,18 @@ def sample_signal():
             "price_change_pct": 0.05,
             "orderbook_imbalance": 0.15,
             "binance_current": 91500.0,
-            "market_start": 1767811500,
         },
+        market_start=1767811500,  # Used to generate slug in to_dict()
     )
 
 
 @pytest.fixture
 def sample_position():
     """Create a sample position."""
+    # Position doesn't have 'slug' field - generates slug in to_dict() from market_start
     return Position(
         id="BTC_1767811500_1767811947",
         symbol="BTC",
-        slug="btc-updown-15m-1767811500",
         side="UP",
         entry_price=0.50,
         size=100,

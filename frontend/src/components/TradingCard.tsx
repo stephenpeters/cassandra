@@ -15,7 +15,10 @@ import {
   Clock,
   ShieldAlert,
   Wallet,
+  Power,
+  PowerOff,
 } from "lucide-react";
+import { SimpleTooltip } from "@/components/ui/tooltip";
 import type { TradingAccount, TradingSignal, TradingConfig, LiveTradingStatus, Markets15MinData } from "@/types";
 
 interface TradingCardProps {
@@ -30,6 +33,7 @@ interface TradingCardProps {
   onConfigUpdate: (config: Partial<TradingConfig>) => void;
   onModeChange: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
   onSetAllowances?: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  onKillSwitch?: (activate: boolean, reason?: string) => Promise<{ success: boolean; error?: string }>;
   onManualOrder?: (order: { symbol: string; side: "UP" | "DOWN"; amount: number }) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -102,6 +106,7 @@ function TradingCardComponent({
   onConfigUpdate,
   onModeChange,
   onSetAllowances,
+  onKillSwitch,
   onManualOrder,
 }: TradingCardProps) {
   const [showSettings, setShowSettings] = useState(false);
@@ -111,6 +116,10 @@ function TradingCardComponent({
   const [isChangingMode, setIsChangingMode] = useState(false);
   const [uptime, setUptime] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
+
+  // Kill switch state
+  const [killSwitchLoading, setKillSwitchLoading] = useState(false);
+  const [killSwitchError, setKillSwitchError] = useState<string | null>(null);
 
   // Allowances state
   const [allowancesLoading, setAllowancesLoading] = useState(false);
@@ -209,6 +218,27 @@ function TradingCardComponent({
     }
   };
 
+  // Handle kill switch toggle
+  const handleKillSwitch = async (activate: boolean) => {
+    if (!onKillSwitch) return;
+
+    setKillSwitchLoading(true);
+    setKillSwitchError(null);
+
+    try {
+      const result = await onKillSwitch(activate, activate ? "Emergency halt from UI" : undefined);
+      if (!result.success) {
+        setKillSwitchError(result.error || "Failed to toggle kill switch");
+        setTimeout(() => setKillSwitchError(null), 5000);
+      }
+    } catch {
+      setKillSwitchError("Unexpected error");
+      setTimeout(() => setKillSwitchError(null), 5000);
+    } finally {
+      setKillSwitchLoading(false);
+    }
+  };
+
   // Track uptime since component mount (proxy for session start)
   useEffect(() => {
     const interval = setInterval(() => {
@@ -284,25 +314,57 @@ function TradingCardComponent({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Kill Switch Button - Emergency halt */}
+            {onKillSwitch && (
+              <SimpleTooltip
+                content={liveStatus?.kill_switch_active
+                  ? "Resume trading"
+                  : "Emergency halt all trading"
+                }
+              >
+                <button
+                  onClick={() => handleKillSwitch(!liveStatus?.kill_switch_active)}
+                  disabled={killSwitchLoading}
+                  className={`p-1.5 rounded transition-colors ${
+                    liveStatus?.kill_switch_active
+                      ? "bg-orange-500 text-white hover:bg-orange-600"
+                      : "bg-zinc-100 dark:bg-zinc-800 hover:bg-red-100 dark:hover:bg-red-900/30 text-zinc-600 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                  } disabled:opacity-50`}
+                >
+                  {killSwitchLoading ? (
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  ) : liveStatus?.kill_switch_active ? (
+                    <Power className="h-4 w-4" />
+                  ) : (
+                    <PowerOff className="h-4 w-4" />
+                  )}
+                </button>
+              </SimpleTooltip>
+            )}
+            {killSwitchError && (
+              <span className="text-xs text-red-500">{killSwitchError}</span>
+            )}
             {/* Mode Toggle Button */}
-            <button
-              onClick={handleModeToggle}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                isLiveMode
-                  ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50"
-                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-              }`}
-              title={isLiveMode ? "Switch to Paper Mode" : "Switch to Live Mode"}
-            >
-              {isLiveMode ? "Go Paper" : "Go Live"}
-            </button>
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className="p-1.5 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-              title="Settings"
-            >
-              <Settings className="h-4 w-4 text-zinc-600 dark:text-zinc-400" />
-            </button>
+            <SimpleTooltip content={isLiveMode ? "Switch to Paper Mode" : "Switch to Live Mode"}>
+              <button
+                onClick={handleModeToggle}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  isLiveMode
+                    ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50"
+                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                {isLiveMode ? "Go Paper" : "Go Live"}
+              </button>
+            </SimpleTooltip>
+            <SimpleTooltip content="Trading Settings">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-1.5 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+              >
+                <Settings className="h-4 w-4 text-zinc-600 dark:text-zinc-400" />
+              </button>
+            </SimpleTooltip>
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-500">
                 {isEnabled ? "Active" : "Paused"}

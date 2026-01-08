@@ -44,6 +44,8 @@ export default function Home() {
     setTradingMode,
     placeTestOrder,
     setAllowances,
+    activateKillSwitch,
+    deactivateKillSwitch,
   } = useWebSocket();
 
   // Filter trades by selected whale
@@ -140,6 +142,14 @@ export default function Home() {
           onConfigUpdate={updatePaperConfig}
           onModeChange={setTradingMode}
           onSetAllowances={setAllowances}
+          onKillSwitch={async (activate: boolean, reason?: string) => {
+            const apiKey = localStorage.getItem("predmkt_api_key") || "";
+            if (activate) {
+              return activateKillSwitch(reason || "Manual UI activation", apiKey);
+            } else {
+              return deactivateKillSwitch(apiKey);
+            }
+          }}
           onManualOrder={async (order) => {
             const apiKey = localStorage.getItem("predmkt_api_key") || "";
             return placeTestOrder(order.symbol, order.side, order.amount, apiKey);

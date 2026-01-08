@@ -3,6 +3,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { FlipCountdownCompact } from "@/components/ui/flip-countdown";
+import { SimpleTooltip } from "@/components/ui/tooltip";
 import { SimpleStreamingChart } from "@/components/charts/SimpleStreamingChart";
 import { MarketAnalysis } from "@/components/charts/MarketAnalysis";
 import { IndicatorGauges } from "@/components/charts/IndicatorGauges";
@@ -144,18 +146,26 @@ export function PolymarketDashboard({
             <Clock className="w-4 h-4 text-zinc-400" />
             {timing?.is_open ? (
               <div className="flex items-center gap-2">
-                <span className="font-mono text-purple-500">
-                  @ {formatElapsed(timeElapsedInWindow)}
-                </span>
+                <SimpleTooltip content="Time elapsed in current window">
+                  <span className="font-mono text-purple-500">
+                    @ {formatElapsed(timeElapsedInWindow)}
+                  </span>
+                </SimpleTooltip>
                 <span className="text-zinc-400">|</span>
-                <span className="font-mono text-blue-500">
-                  {formatCountdown(timeRemainingInWindow)} left
-                </span>
+                <SimpleTooltip content="Time remaining in window">
+                  <div className="text-blue-500 flex items-center gap-1">
+                    <FlipCountdownCompact seconds={timeRemainingInWindow} />
+                    <span className="text-xs">left</span>
+                  </div>
+                </SimpleTooltip>
               </div>
             ) : (
-              <span className="font-mono text-zinc-500">
-                Next in {formatCountdown(countdown)}
-              </span>
+              <SimpleTooltip content="Time until next market opens">
+                <div className="text-zinc-500 flex items-center gap-1">
+                  <span className="text-xs">Next in</span>
+                  <FlipCountdownCompact seconds={countdown} />
+                </div>
+              </SimpleTooltip>
             )}
           </div>
           {timing?.is_open && (
@@ -235,15 +245,21 @@ export function PolymarketDashboard({
 
               {/* Odds row */}
               <div className="flex items-center justify-between text-xs mb-1">
-                <span className="text-zinc-500">Odds:</span>
+                <SimpleTooltip content="Current market odds for price going UP or DOWN">
+                  <span className="text-zinc-500 cursor-help">Odds:</span>
+                </SimpleTooltip>
                 {market ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-green-500 font-mono">
-                      ↑{(market.price * 100).toFixed(0)}%
-                    </span>
-                    <span className="text-red-500 font-mono">
-                      ↓{((1 - market.price) * 100).toFixed(0)}%
-                    </span>
+                    <SimpleTooltip content={`Buy UP token at $${(market.price).toFixed(2)} - pays $1 if price goes up`}>
+                      <span className="text-green-500 font-mono cursor-help">
+                        ↑${(market.price).toFixed(2)}
+                      </span>
+                    </SimpleTooltip>
+                    <SimpleTooltip content={`Buy DOWN token at $${(1 - market.price).toFixed(2)} - pays $1 if price goes down`}>
+                      <span className="text-red-500 font-mono cursor-help">
+                        ↓${(1 - market.price).toFixed(2)}
+                      </span>
+                    </SimpleTooltip>
                   </div>
                 ) : (
                   <span className="text-zinc-400">—</span>
@@ -288,22 +304,27 @@ export function PolymarketDashboard({
             </div>
             {currentMarket && (
               <div className="flex items-center gap-3 text-sm">
-                <span className="text-green-500 font-mono">
-                  UP: {(currentMarket.price * 100).toFixed(1)}%
-                </span>
-                <span className="text-red-500 font-mono">
-                  DOWN: {((1 - currentMarket.price) * 100).toFixed(1)}%
-                </span>
-                <a
-                  href={`https://polymarket.com/event/${selectedSymbol.toLowerCase()}-updown-15m-${currentMarket.start_time}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
-                  title="Open on Polymarket"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  PM
-                </a>
+                <SimpleTooltip content={`UP token price: $${currentMarket.price.toFixed(3)} - implied ${(currentMarket.price * 100).toFixed(1)}% chance of price increase`}>
+                  <span className="text-green-500 font-mono cursor-help">
+                    UP: ${currentMarket.price.toFixed(2)}
+                  </span>
+                </SimpleTooltip>
+                <SimpleTooltip content={`DOWN token price: $${(1 - currentMarket.price).toFixed(3)} - implied ${((1 - currentMarket.price) * 100).toFixed(1)}% chance of price decrease`}>
+                  <span className="text-red-500 font-mono cursor-help">
+                    DOWN: ${(1 - currentMarket.price).toFixed(2)}
+                  </span>
+                </SimpleTooltip>
+                <SimpleTooltip content="Open this market on Polymarket">
+                  <a
+                    href={`https://polymarket.com/event/${selectedSymbol.toLowerCase()}-updown-15m-${currentMarket.start_time}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    PM
+                  </a>
+                </SimpleTooltip>
               </div>
             )}
           </div>

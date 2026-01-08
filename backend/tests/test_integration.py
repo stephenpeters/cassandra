@@ -15,7 +15,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from trading import TradingEngine, TradingConfig
+from trading import TradingEngine, TradingConfig, TradingAccount
 from live_trading import LiveTradingEngine, LiveTradingConfig, TradingMode
 
 
@@ -39,14 +39,16 @@ class TestFullTradingFlow:
             use_supertrend=True,
         )
 
-        # Create trading engine
-        paper_engine = TradingEngine(
-            config=trading_config,
-            state_path=str(tmp_path / "paper_state.json"),
+        # Create trading engine - uses data_dir, not config/state_path
+        paper_engine = TradingEngine(data_dir=str(tmp_path), ledger=None)
+        paper_engine.config = trading_config
+        paper_engine.account = TradingAccount(
+            balance=trading_config.starting_balance,
+            starting_balance=trading_config.starting_balance,
         )
         paper_engine.trading_mode = "paper"
 
-        # Create live trading engine
+        # Create live trading engine - creates its own paper_engine internally
         live_config = LiveTradingConfig(
             mode=TradingMode.PAPER,
             max_position_usd=100,
@@ -54,9 +56,10 @@ class TestFullTradingFlow:
         )
 
         live_engine = LiveTradingEngine(
+            private_key=None,  # No real trades in test
             config=live_config,
-            paper_engine=paper_engine,
-            state_path=str(tmp_path / "live_state.json"),
+            data_dir=str(tmp_path),
+            ledger=None,
         )
 
         return paper_engine, live_engine
@@ -70,14 +73,16 @@ class TestFullTradingFlow:
         paper_engine.record_window_open("BTC", market_start, 91000.0)
 
         # Create position manually (simulating signal)
+        # _open_position signature: symbol, side, price, market_start, market_end, checkpoint, confidence, position_multiplier
         paper_engine._open_position(
             symbol="BTC",
             side="UP",
-            entry_price=0.50,
-            size=100,
+            price=0.50,
             market_start=market_start,
             market_end=market_start + 900,
             checkpoint="7m30s",
+            confidence=0.75,
+            position_multiplier=1.0,
         )
 
         assert len(paper_engine.account.positions) == 1
@@ -104,10 +109,11 @@ class TestFullTradingFlow:
 
         from trading import CheckpointSignal, SignalType
 
-        # Create signal
+        market_start = int(time.time()) - 450
+
+        # Create signal - CheckpointSignal doesn't have 'slug' field
         signal = CheckpointSignal(
             symbol="BTC",
-            slug="btc-updown-15m-123",
             checkpoint="7m30s",
             timestamp=int(time.time()),
             signal=SignalType.BUY_UP,
@@ -117,8 +123,8 @@ class TestFullTradingFlow:
             confidence=0.8,
             momentum={
                 "direction": "UP",
-                "market_start": int(time.time()) - 450,
             },
+            market_start=market_start,  # Used to generate slug in to_dict()
         )
 
         # Process signal
@@ -159,29 +165,30 @@ class TestFullTradingFlow:
         paper_engine.account.balance = 2000
         paper_engine.trading_mode = "live"
 
-        # Create position
+        # Create position - use correct _open_position signature
         market_start = int(time.time())
         paper_engine._open_position(
             symbol="ETH",
             side="DOWN",
-            entry_price=0.45,
-            size=50,
+            price=0.45,
             market_start=market_start,
             market_end=market_start + 900,
             checkpoint="7m30s",
+            confidence=0.7,
+            position_multiplier=1.0,
         )
+
+        # Opening a position deducts cost basis from balance, so capture actual balance
+        balance_after_position = paper_engine.account.balance
 
         # Save
         paper_engine._save_state()
 
-        # Create new engine (simulate restart)
-        new_engine = TradingEngine(
-            config=paper_engine.config,
-            state_path=paper_engine.state_path,
-        )
+        # Create new engine (simulate restart) - TradingEngine uses data_dir
+        new_engine = TradingEngine(data_dir=str(tmp_path), ledger=None)
 
-        # Verify state
-        assert new_engine.account.balance == 2000
+        # Verify state - balance should match what it was after position was opened
+        assert abs(new_engine.account.balance - balance_after_position) < 0.01
         assert new_engine.trading_mode == "live"
         assert len(new_engine.account.positions) == 1
         assert new_engine.account.positions[0].symbol == "ETH"
@@ -190,6 +197,22 @@ class TestFullTradingFlow:
 class TestConcurrency:
     """Tests for concurrent operations."""
 
+    @pytest.fixture
+    def trading_system(self, tmp_path):
+        """Create trading system for concurrency tests."""
+        live_config = LiveTradingConfig(
+            mode=TradingMode.PAPER,
+            max_position_usd=100,
+            enabled_assets=["BTC", "ETH"],
+        )
+        live_engine = LiveTradingEngine(
+            private_key=None,
+            config=live_config,
+            data_dir=str(tmp_path),
+            ledger=None,
+        )
+        return live_engine.paper_engine, live_engine
+
     @pytest.mark.asyncio
     async def test_duplicate_signals_rejected(self, trading_system):
         """Test duplicate signals are properly rejected."""
@@ -197,9 +220,10 @@ class TestConcurrency:
 
         from trading import CheckpointSignal, SignalType
 
+        market_start = int(time.time()) - 450
+
         signal = CheckpointSignal(
             symbol="BTC",
-            slug="btc-updown-15m-123",
             checkpoint="7m30s",
             timestamp=int(time.time()),
             signal=SignalType.BUY_UP,
@@ -207,7 +231,8 @@ class TestConcurrency:
             market_price=0.50,
             edge=0.10,
             confidence=0.8,
-            momentum={"market_start": int(time.time()) - 450},
+            momentum={"direction": "UP"},
+            market_start=market_start,
         )
 
         # Process same signal multiple times
@@ -225,36 +250,46 @@ class TestErrorRecovery:
 
     def test_corrupted_state_file_recovery(self, tmp_path):
         """Test recovery from corrupted state file."""
-        state_path = tmp_path / "corrupted.json"
+        state_path = tmp_path / "paper_trading_state.json"
 
         # Write corrupted JSON
         with open(state_path, "w") as f:
             f.write("{invalid json")
 
         # Should not crash, should start with fresh state
-        engine = TradingEngine(
-            config=TradingConfig(),
-            state_path=str(state_path),
-        )
+        engine = TradingEngine(data_dir=str(tmp_path), ledger=None)
 
         assert engine.account.balance == 1000  # Default
         assert len(engine.account.positions) == 0
 
     def test_missing_state_file(self, tmp_path):
         """Test handling of missing state file."""
-        state_path = tmp_path / "nonexistent.json"
-
         # Should start with fresh state
-        engine = TradingEngine(
-            config=TradingConfig(),
-            state_path=str(state_path),
-        )
+        engine = TradingEngine(data_dir=str(tmp_path), ledger=None)
 
         assert engine.account.balance == 1000
 
 
 class TestAPIIntegration:
     """Tests for API integration points."""
+
+    @pytest.fixture
+    def trading_system(self, tmp_path):
+        """Create trading system for API tests."""
+        paper_engine = TradingEngine(data_dir=str(tmp_path), ledger=None)
+
+        live_config = LiveTradingConfig(
+            mode=TradingMode.PAPER,
+            max_position_usd=100,
+            enabled_assets=["BTC", "ETH"],
+        )
+        live_engine = LiveTradingEngine(
+            private_key=None,
+            config=live_config,
+            data_dir=str(tmp_path),
+            ledger=None,
+        )
+        return paper_engine, live_engine
 
     def test_account_summary_includes_all_fields(self, trading_system):
         """Test account summary has all required fields."""

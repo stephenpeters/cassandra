@@ -1805,6 +1805,127 @@ async def get_market_history(symbol: str = None, limit: int = 10):
 
 
 # ============================================================================
+# MARKET CONFIGURATION ENDPOINTS (V2)
+# ============================================================================
+
+# Supported market timeframes (15m is active, others planned)
+MARKET_TIMEFRAMES = {
+    "15m": {"duration_sec": 900, "slug_pattern": "{sym}-updown-15m-{ts}", "active": True},
+    "1h": {"duration_sec": 3600, "slug_pattern": "{sym}-updown-1h-{ts}", "active": False},
+    "4h": {"duration_sec": 14400, "slug_pattern": "{sym}-updown-4h-{ts}", "active": False},
+    "1d": {"duration_sec": 86400, "slug_pattern": "{sym}-updown-1d-{ts}", "active": False},
+}
+
+# Symbols with viable volume for trading
+VIABLE_SYMBOLS = {
+    "BTC": {"volume_24h": 165000, "tier": "primary"},
+    "ETH": {"volume_24h": 52000, "tier": "primary"},
+    "SOL": {"volume_24h": 15000, "tier": "secondary"},
+    "XRP": {"volume_24h": 8000, "tier": "secondary"},
+    "DOGE": {"volume_24h": 5000, "tier": "secondary"},
+}
+
+
+class MarketConfigUpdate(BaseModel):
+    enabled_symbols: Optional[List[str]] = Field(None, min_length=1, max_length=5)
+    enabled_timeframes: Optional[List[str]] = Field(None, min_length=1, max_length=4)
+
+
+@app.get("/api/markets/config")
+async def get_markets_config():
+    """
+    Get current market configuration.
+
+    Returns enabled symbols, timeframes, and their settings.
+    """
+    # Get enabled symbols from paper trading config
+    enabled_symbols = paper_trading.config.enabled_assets if paper_trading else ["BTC", "ETH"]
+
+    return {
+        "enabled_symbols": enabled_symbols,
+        "enabled_timeframes": ["15m"],  # Only 15m is currently active
+        "available_symbols": VIABLE_SYMBOLS,
+        "available_timeframes": MARKET_TIMEFRAMES,
+    }
+
+
+@app.post("/api/markets/config", dependencies=[Depends(verify_api_key)])
+async def update_markets_config(config: MarketConfigUpdate):
+    """
+    Update market configuration.
+
+    Allows enabling/disabling symbols and timeframes (when available).
+    Requires API key authentication.
+    """
+    if not paper_trading:
+        raise HTTPException(status_code=503, detail="Trading engine not initialized")
+
+    updates = {}
+
+    if config.enabled_symbols:
+        # Validate symbols
+        for sym in config.enabled_symbols:
+            if sym not in VIABLE_SYMBOLS:
+                raise HTTPException(status_code=400, detail=f"Invalid symbol: {sym}")
+        updates["enabled_assets"] = config.enabled_symbols
+
+    if config.enabled_timeframes:
+        # Validate timeframes - only 15m is currently active
+        for tf in config.enabled_timeframes:
+            if tf not in MARKET_TIMEFRAMES:
+                raise HTTPException(status_code=400, detail=f"Invalid timeframe: {tf}")
+            if not MARKET_TIMEFRAMES[tf]["active"]:
+                raise HTTPException(status_code=400, detail=f"Timeframe {tf} not yet available on Polymarket")
+
+    if updates:
+        paper_trading.update_config(updates)
+
+    return {
+        "success": True,
+        "config": {
+            "enabled_symbols": paper_trading.config.enabled_assets,
+            "enabled_timeframes": ["15m"],
+        }
+    }
+
+
+@app.get("/api/markets/available")
+async def get_available_markets():
+    """
+    Check which markets are currently available on Polymarket.
+
+    Returns a grid of Symbol x Timeframe availability.
+    """
+    available = {}
+
+    for sym in VIABLE_SYMBOLS:
+        available[sym] = {}
+        for tf, tf_config in MARKET_TIMEFRAMES.items():
+            # Check if market exists for this symbol/timeframe
+            if tf == "15m" and polymarket_feed:
+                market = polymarket_feed.active_markets.get(sym)
+                available[sym][tf] = {
+                    "exists": market is not None,
+                    "active": tf_config["active"],
+                    "volume_24h": VIABLE_SYMBOLS[sym]["volume_24h"],
+                    "current_market": market.to_dict() if market else None,
+                }
+            else:
+                available[sym][tf] = {
+                    "exists": False,
+                    "active": tf_config["active"],
+                    "volume_24h": VIABLE_SYMBOLS[sym]["volume_24h"],
+                    "current_market": None,
+                }
+
+    return {
+        "symbols": list(VIABLE_SYMBOLS.keys()),
+        "timeframes": list(MARKET_TIMEFRAMES.keys()),
+        "availability": available,
+    }
+
+
+# ============================================================================
 # PAPER TRADING ENDPOINTS
 # ============================================================================
 

@@ -288,9 +288,34 @@ async def startup():
     polymarket_feed.on_market_update = lambda mkt: asyncio.create_task(
         broadcast({"type": "market_update", "data": mkt.to_dict()})
     )
-    polymarket_feed.on_market_trade = lambda trade: asyncio.create_task(
-        broadcast({"type": "market_trade", "data": trade.to_dict()})
-    )
+
+    def on_polymarket_trade(trade):
+        """Handle market trade from Polymarket feed - broadcast and record to store"""
+        # Broadcast to frontend
+        asyncio.create_task(
+            broadcast({"type": "market_trade", "data": trade.to_dict()})
+        )
+
+        # Record to market data store for rolling 24-hour analysis
+        if market_data_store:
+            # Get current market window
+            current_window = (int(time.time()) // 900) * 900
+
+            trade_record = MarketTradeRecord(
+                id=f"{trade.symbol}_{trade.timestamp}_{trade.maker[:8]}",
+                timestamp=trade.timestamp,
+                symbol=trade.symbol.upper(),
+                side=trade.outcome.upper(),  # UP or DOWN
+                size=trade.size,
+                price=trade.price,
+                usd_value=trade.usd_value,
+                market_start=current_window,
+                is_buy=(trade.side == "BUY"),
+                maker=trade.maker,
+            )
+            market_data_store.record_trade(trade_record)
+
+    polymarket_feed.on_market_trade = on_polymarket_trade
 
     # Initialize momentum calculator
     momentum_calc = MomentumCalculator(binance_feed)
@@ -393,6 +418,29 @@ async def startup():
         """Handle real-time whale trade from WebSocket"""
         print(f"[WhaleWS] {event.whale_name} {event.side} {event.outcome} on {event.symbol}: "
               f"${event.usd_value:.2f} (latency: {event.detection_latency_ms}ms)")
+
+        # Record trade to market data store for rolling 24-hour analysis
+        if market_data_store:
+            # Parse market_start from slug (e.g., btc-updown-15m-1234567890)
+            try:
+                market_start_str = event.market_slug.split("-")[-1]
+                market_start = int(market_start_str)
+            except (ValueError, IndexError):
+                market_start = 0
+
+            trade_record = MarketTradeRecord(
+                id=f"{event.symbol}_{event.timestamp}_{event.wallet[:8]}",
+                timestamp=event.timestamp,
+                symbol=event.symbol,
+                side=event.outcome.upper(),  # UP or DOWN
+                size=event.size,
+                price=event.price,
+                usd_value=event.usd_value,
+                market_start=market_start,
+                is_buy=(event.side == "BUY"),
+                maker=event.wallet,
+            )
+            market_data_store.record_trade(trade_record)
 
         # Broadcast to frontend
         asyncio.create_task(

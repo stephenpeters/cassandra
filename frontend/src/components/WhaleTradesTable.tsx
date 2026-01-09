@@ -38,7 +38,7 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
   if (trades.length === 0) {
     return (
       <div className="flex items-center justify-center h-40 text-zinc-500">
-        Waiting for whale trades...
+        Waiting for copy trades...
       </div>
     );
   }
@@ -49,7 +49,7 @@ function WhaleTradesTableComponent({ trades }: WhaleTradesTableProps) {
         <TableHeader className="sticky top-0 bg-zinc-100 dark:bg-zinc-900">
           <TableRow className="border-zinc-300 dark:border-zinc-800">
             <TableHead className="text-zinc-400 w-20">Time</TableHead>
-            <TableHead className="text-zinc-400 w-24">Whale</TableHead>
+            <TableHead className="text-zinc-400 w-24">Trader</TableHead>
             <TableHead className="text-zinc-400">Market</TableHead>
             <TableHead className="text-zinc-400 w-16 text-center">Side</TableHead>
             <TableHead className="text-zinc-400 w-20 text-right">Size</TableHead>

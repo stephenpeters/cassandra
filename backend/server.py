@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Security
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
@@ -131,6 +131,7 @@ from live_trading import (
 )
 from trade_ledger import TradeLedger
 from market_data_store import MarketDataStore, PriceSnapshot, MarketTradeRecord
+from strategy_manager import get_strategy_manager, TraderConfig
 from whale_following import (
     WhaleFollowingStrategy,
     WhaleFollowConfig,
@@ -1165,7 +1166,9 @@ async def paper_trading_loop():
                 print(f"[PTLoop] Processing {len(active_markets)} markets: {list(active_markets.keys())}", flush=True)
 
             # Determine if paper trading is active for signal generation
-            paper_trading_active = paper_trading and paper_trading.config.enabled
+            # Paper trading ONLY runs when live_trading mode is "paper" (not "live")
+            live_mode_is_paper = not live_trading or live_trading.config.mode.value == "paper"
+            paper_trading_active = paper_trading and paper_trading.config.enabled and live_mode_is_paper
 
             for symbol, market_data in active_markets.items():
                 market_start = market_data.get("start_time", 0)
@@ -1287,9 +1290,9 @@ async def paper_trading_loop():
                     })
 
                     # =========================================================
-                    # LIVE TRADING: Send order to Polymarket if in live mode
+                    # LIVE TRADING: Send order to Polymarket if can execute
                     # =========================================================
-                    if live_trading and paper_trading.trading_mode == "live":
+                    if live_trading and live_trading.can_execute_trade():
                         # Get token_ids from active markets
                         active_markets = polymarket_feed.get_active_markets() if polymarket_feed else {}
                         market_info = active_markets.get(symbol, {})
@@ -1408,7 +1411,8 @@ async def paper_trading_loop():
             # =====================================================================
             # RESOLVE LIVE TRADING POSITIONS
             # =====================================================================
-            if live_trading and paper_trading.trading_mode == "live":
+            # Note: Still resolve even if kill switch is on (positions need to settle)
+            if live_trading and live_trading.config.mode.value == "live":
                 for position in list(live_trading.open_positions):
                     if now >= position.market_end:
                         binance_sym = f"{position.symbol}usdt".lower()
@@ -1488,10 +1492,13 @@ async def health_check():
         status["components"]["polymarket_feed"] = "not_initialized"
 
     # Check paper trading
+    # Paper trading is only "active" when live mode is "paper"
+    live_mode_is_paper = not live_trading or live_trading.config.mode.value == "paper"
     if paper_trading:
-        status["components"]["paper_trading"] = "healthy"
+        status["components"]["paper_trading"] = "healthy" if live_mode_is_paper else "inactive"
         status["paper_trading"] = {
             "enabled": paper_trading.config.enabled,
+            "active": paper_trading.config.enabled and live_mode_is_paper,  # Actually running
             "enabled_assets": paper_trading.config.enabled_assets,
             "balance": paper_trading.account.balance,
             "open_positions": len(paper_trading.account.positions),
@@ -2413,6 +2420,96 @@ async def reset_circuit_breaker(_: str = Depends(verify_api_key)):
     return {"status": "ok", "circuit_breaker": live_trading.circuit_breaker.to_dict()}
 
 
+@app.post("/api/live-trading/alerts")
+async def set_alerts_enabled(
+    enabled: bool = True,
+    _: str = Depends(verify_api_key)
+):
+    """
+    Enable or disable trade alerts.
+
+    Defaults:
+    - Paper mode: Alerts OFF (unless enabled)
+    - Live mode: Alerts ON (unless disabled)
+    """
+    if not live_trading:
+        return {"error": "Live trading not initialized"}
+
+    live_trading.set_alerts_enabled(enabled)
+    return {
+        "status": "ok",
+        "alerts_enabled": enabled,
+        "effective_mode": live_trading.get_effective_mode(),
+    }
+
+
+@app.get("/api/live-trading/effective-mode")
+async def get_effective_mode():
+    """
+    Get the effective trading mode.
+
+    Returns the resolved mode considering kill switch and circuit breaker:
+    - "killed" - Kill switch active
+    - "halted" - Circuit breaker triggered
+    - "paper" - Paper trading
+    - "live" - Live trading
+    """
+    if not live_trading:
+        return {"effective_mode": "disabled", "can_trade": False}
+
+    return {
+        "effective_mode": live_trading.get_effective_mode(),
+        "can_trade": live_trading.can_execute_trade(),
+        "config_mode": live_trading.config.mode.value,
+        "kill_switch": live_trading.kill_switch_active,
+        "circuit_breaker": live_trading.circuit_breaker.triggered,
+        "alerts_enabled": live_trading.are_alerts_enabled(),
+    }
+
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """
+    Telegram webhook endpoint for bot commands.
+
+    Commands:
+    - /kill - Emergency stop all trading
+    - /status - Get current status
+    - /resume - Resume trading
+    - /alerts on|off - Toggle alerts
+    """
+    if not live_trading:
+        return {"ok": True}  # Return OK to avoid Telegram retries
+
+    try:
+        data = await request.json()
+        message = data.get("message", {})
+        text = message.get("text", "")
+        chat = message.get("chat", {})
+        chat_id = str(chat.get("id", ""))
+
+        if not text or not chat_id:
+            return {"ok": True}
+
+        # Handle the command
+        response = await live_trading.handle_telegram_command(text, chat_id)
+
+        # Send response back to Telegram
+        if response and live_trading.config.telegram_bot_token:
+            import httpx
+            url = f"https://api.telegram.org/bot{live_trading.config.telegram_bot_token}/sendMessage"
+            async with httpx.AsyncClient() as client:
+                await client.post(url, json={
+                    "chat_id": chat_id,
+                    "text": response,
+                }, timeout=10.0)
+
+        return {"ok": True}
+    except Exception as e:
+        print(f"[Telegram] Webhook error: {e}")
+        return {"ok": True}  # Always return OK to Telegram
+
+
 @app.post("/api/live-trading/refresh-credentials")
 async def refresh_api_credentials(_: str = Depends(verify_api_key)):
     """
@@ -2533,8 +2630,12 @@ async def place_test_order(
     if not live_trading:
         return JSONResponse({"error": "Live trading not initialized"}, status_code=400)
 
-    if live_trading.config.mode.value != "live":
-        return JSONResponse({"error": "Not in live mode - switch to live mode first"}, status_code=400)
+    if not live_trading.can_execute_trade():
+        effective_mode = live_trading.get_effective_mode()
+        return JSONResponse({
+            "error": f"Cannot trade - effective mode is '{effective_mode}'",
+            "hint": "Switch to live mode and ensure kill switch is off"
+        }, status_code=400)
 
     # Initialize CLOB if needed
     clob_ok, clob_msg = live_trading.ensure_clob_initialized()
@@ -2595,7 +2696,7 @@ async def place_test_order(
         market_end = market_info.get("market_end", market_start + 900)  # 15 min default
 
         # Calculate fill details
-        fill_price = order.fill_price or 0.50
+        fill_price = order.filled_price or 0.50
         size = (request.amount_usd / fill_price) if fill_price > 0 else 0
 
         position = LivePosition(
@@ -2992,6 +3093,146 @@ async def adjust_account(
         return JSONResponse({"error": "Failed to record adjustment"}, status_code=500)
 
     return {"status": "ok", "transaction": tx.to_dict()}
+
+
+# ============================================================================
+# STRATEGY MANAGEMENT API
+# ============================================================================
+
+@app.get("/api/strategies")
+async def get_strategies():
+    """Get all trading strategies and their settings"""
+    strategy_manager = get_strategy_manager()
+    return strategy_manager.to_dict()
+
+
+@app.get("/api/strategies/{name}")
+async def get_strategy(name: str):
+    """Get a specific strategy by name"""
+    strategy_manager = get_strategy_manager()
+    strategy = strategy_manager.get_strategy(name)
+    if not strategy:
+        return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
+    return strategy.to_dict()
+
+
+@app.post("/api/strategies/{name}/enable")
+async def enable_strategy(
+    name: str,
+    enabled: bool = True,
+    _: str = Depends(verify_api_key)
+):
+    """Enable or disable a strategy (requires API key)"""
+    strategy_manager = get_strategy_manager()
+    if name not in strategy_manager.strategies:
+        return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
+
+    strategy_manager.enable_strategy(name, enabled)
+    return {
+        "status": "ok",
+        "strategy": name,
+        "enabled": enabled,
+    }
+
+
+@app.post("/api/strategies/{name}/markets")
+async def set_strategy_markets(
+    name: str,
+    markets: list[str],
+    _: str = Depends(verify_api_key)
+):
+    """Set which markets a strategy applies to (requires API key)"""
+    strategy_manager = get_strategy_manager()
+    if name not in strategy_manager.strategies:
+        return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
+
+    strategy_manager.set_strategy_markets(name, markets)
+    return {
+        "status": "ok",
+        "strategy": name,
+        "markets": strategy_manager.strategies[name].markets,
+    }
+
+
+@app.post("/api/strategies/{name}/settings")
+async def update_strategy_settings(
+    name: str,
+    settings: dict,
+    _: str = Depends(verify_api_key)
+):
+    """Update strategy settings (requires API key)"""
+    strategy_manager = get_strategy_manager()
+    if name not in strategy_manager.strategies:
+        return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
+
+    strategy_manager.update_strategy_settings(name, settings)
+    return {
+        "status": "ok",
+        "strategy": name,
+        "settings": strategy_manager.strategies[name].settings,
+    }
+
+
+@app.get("/api/strategies/copy_trading/traders")
+async def get_copy_traders():
+    """Get all copy trading traders"""
+    strategy_manager = get_strategy_manager()
+    traders = strategy_manager.get_copy_traders()
+    return {"traders": [t.to_dict() for t in traders]}
+
+
+@app.post("/api/strategies/copy_trading/traders/{trader_name}/enable")
+async def enable_trader(
+    trader_name: str,
+    enabled: bool = True,
+    _: str = Depends(verify_api_key)
+):
+    """Enable or disable a specific trader (requires API key)"""
+    strategy_manager = get_strategy_manager()
+    strategy_manager.enable_trader(trader_name, enabled)
+    return {
+        "status": "ok",
+        "trader": trader_name,
+        "enabled": enabled,
+    }
+
+
+@app.post("/api/strategies/copy_trading/traders")
+async def add_trader(
+    name: str,
+    address: str,
+    min_trade_size: float = 500,
+    _: str = Depends(verify_api_key)
+):
+    """Add a new trader to copy (requires API key)"""
+    strategy_manager = get_strategy_manager()
+
+    trader = TraderConfig(
+        name=name,
+        address=address,
+        enabled=True,
+        min_trade_size=min_trade_size,
+    )
+    strategy_manager.add_trader(trader)
+
+    return {
+        "status": "ok",
+        "trader": trader.to_dict(),
+    }
+
+
+@app.delete("/api/strategies/copy_trading/traders/{trader_name}")
+async def remove_trader(
+    trader_name: str,
+    _: str = Depends(verify_api_key)
+):
+    """Remove a trader from copy list (requires API key)"""
+    strategy_manager = get_strategy_manager()
+    strategy_manager.remove_trader(trader_name)
+    return {
+        "status": "ok",
+        "removed": trader_name,
+    }
 
 
 # ============================================================================

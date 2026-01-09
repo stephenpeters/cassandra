@@ -8,7 +8,8 @@ import json
 import logging
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Any
 from collections import deque
@@ -351,6 +352,30 @@ class BinanceFeed:
         """Get recent candles for charting"""
         candles = self.candles.get(symbol, [])[-count:]
         return [c.to_dict() for c in candles]
+
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """
+        Get the current price for a symbol.
+
+        Args:
+            symbol: Trading pair symbol (e.g., "BTCUSDT" or "btcusdt")
+
+        Returns:
+            Current price or None if not available
+        """
+        symbol = symbol.lower()
+
+        # Try to get from recent trades first (most up-to-date)
+        trades = self.trades.get(symbol, [])
+        if trades:
+            return trades[-1].price
+
+        # Fall back to last candle close price
+        candles = self.candles.get(symbol, [])
+        if candles:
+            return candles[-1].close
+
+        return None
 
     async def stop(self):
         """Stop the feed"""
@@ -1047,6 +1072,26 @@ class Polymarket15MinFeed:
         """Get all active 15-min markets"""
         return {sym: mkt.to_dict() for sym, mkt in self.active_markets.items()}
 
+    def get_current_markets(self) -> list[dict]:
+        """
+        Get current active markets as a list.
+
+        Returns list of dicts with symbol, up_price, down_price, etc.
+        Used by whale detector and other components.
+        """
+        result = []
+        for symbol, market in self.active_markets.items():
+            result.append({
+                "symbol": symbol,
+                "up_price": market.price,
+                "down_price": 1.0 - market.price,
+                "condition_id": market.condition_id,
+                "start_time": market.start_time,
+                "end_time": market.end_time,
+                "is_active": market.is_active,
+            })
+        return result
+
     def get_recent_trades(self, symbol: Optional[str] = None, limit: int = 50) -> list[dict]:
         """Get recent market trades, optionally filtered by symbol"""
         trades = list(self.market_trades)
@@ -1055,14 +1100,19 @@ class Polymarket15MinFeed:
         return [t.to_dict() for t in trades[:limit]]
 
     def get_next_market_time(self) -> dict:
-        """Get timing info for the current and next 15-minute market window"""
-        now = datetime.now()
+        """Get timing info for the current and next 15-minute market window.
+
+        Uses Eastern Time (America/New_York) to match Polymarket's market schedule.
+        """
+        # Use Eastern Time to match Polymarket
+        ET = ZoneInfo("America/New_York")
+        now = datetime.now(ET)
         minutes = now.minute
 
         # Current window starts at most recent :00, :15, :30, or :45
         current_slot = (minutes // 15) * 15
         current_start = now.replace(minute=current_slot, second=0, microsecond=0)
-        current_end = datetime.fromtimestamp(current_start.timestamp() + 900)
+        current_end = current_start + timedelta(seconds=900)
 
         # Next window
         next_slot = ((minutes // 15) + 1) * 15

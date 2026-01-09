@@ -199,8 +199,51 @@ function SimpleStreamingChartComponent({
     );
   }
 
+  // Calculate over/under relative to price to beat
+  const priceComparison = useMemo(() => {
+    if (!startPrice || !currentValues) return null;
+    const diff = currentValues.binance - startPrice;
+    const diffPct = (diff / startPrice) * 100;
+    return {
+      diff,
+      diffPct,
+      isOver: diff > 0,
+    };
+  }, [startPrice, currentValues]);
+
   return (
     <div className="relative">
+      {/* Price Comparison Panel - Polymarket Style */}
+      {showPriceToBeat && startPrice && currentValues && priceComparison && (
+        <div className="flex items-center justify-between mb-2 p-2 bg-zinc-100 dark:bg-zinc-800/70 rounded-lg">
+          {/* Price to Beat */}
+          <div className="flex flex-col">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Price to Beat</span>
+            <span className="text-lg font-bold font-mono text-violet-600 dark:text-violet-400">
+              ${startPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* Current Price */}
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">{symbol} Current</span>
+            <span className="text-lg font-bold font-mono text-zinc-800 dark:text-zinc-100">
+              ${currentValues.binance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* Over/Under */}
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">
+              {priceComparison.isOver ? "Over" : "Under"}
+            </span>
+            <span className={`text-lg font-bold font-mono ${priceComparison.isOver ? "text-green-500" : "text-red-500"}`}>
+              {priceComparison.isOver ? "+" : ""}${Math.abs(priceComparison.diff).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Legend */}
       <div className="flex items-center justify-between text-[10px] mb-1 px-1">
         <div className="flex items-center gap-3">
@@ -208,24 +251,16 @@ function SimpleStreamingChartComponent({
             <span className="w-2 h-0.5 bg-amber-500 rounded"></span>
             <span className="text-zinc-500">{symbol}</span>
             {currentValues && (
-              <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                ${currentValues.binance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </span>
-            )}
-            {currentValues && (
               <span className={`font-mono ${currentValues.delta >= 0 ? "text-green-500" : "text-red-500"}`}>
                 ({currentValues.delta >= 0 ? "+" : ""}{currentValues.deltaPct.toFixed(2)}%)
               </span>
             )}
           </span>
-          {/* Price to Beat indicator */}
+          {/* Price to Beat line indicator */}
           {showPriceToBeat && startPrice && (
             <span className="flex items-center gap-1">
               <span className="w-2 h-0.5 bg-violet-500 rounded border-dashed"></span>
-              <span className="text-zinc-500">Target</span>
-              <span className="font-mono text-violet-500">
-                ${startPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </span>
+              <span className="text-zinc-500">Target Line</span>
             </span>
           )}
         </div>

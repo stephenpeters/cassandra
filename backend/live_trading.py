@@ -171,6 +171,9 @@ class LiveTradingConfig:
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     discord_webhook_url: Optional[str] = None
+    # Alert toggle: Paper mode defaults OFF, Live mode defaults ON
+    # None = use mode default, True/False = explicit override
+    alerts_enabled: Optional[bool] = None
 
     # Assets
     enabled_assets: list = field(default_factory=lambda: ["BTC"])
@@ -366,16 +369,16 @@ class LiveTradingEngine:
         # Initialize paper trading engine for signals (share ledger)
         self.paper_engine = TradingEngine(data_dir=data_dir, ledger=ledger)
 
-        # Polymarket client (only if live mode and key provided)
-        self.clob_client: Optional[ClobClient] = None
-        if private_key and CLOB_AVAILABLE and self.config.mode == TradingMode.LIVE:
-            self._init_clob_client()
-
-        # State
+        # State (must be initialized before CLOB client which checks balance)
         self.circuit_breaker = CircuitBreaker()
         self.open_positions: list[LivePosition] = []
         self.order_history: list[LiveOrder] = []
         self.kill_switch_active = False
+
+        # Polymarket client (only if live mode and key provided)
+        self.clob_client: Optional[ClobClient] = None
+        if private_key and CLOB_AVAILABLE and self.config.mode == TradingMode.LIVE:
+            self._init_clob_client()
 
         # Order idempotency - track processed signals to prevent duplicates
         self._processed_signals: set[str] = set()
@@ -562,6 +565,61 @@ class LiveTradingEngine:
         logger.warning("Kill switch deactivated - trading resumed")
         await self._send_alert("RESUME", "Trading resumed after kill switch")
 
+        self._save_state()
+
+    # -------------------------------------------------------------------------
+    # MODE RESOLUTION (Single Source of Truth)
+    # -------------------------------------------------------------------------
+
+    def get_effective_mode(self) -> str:
+        """
+        Get the effective trading mode.
+        Kill switch ALWAYS wins over everything else.
+
+        Returns:
+            "killed" - Kill switch active, no trading allowed
+            "halted" - Circuit breaker triggered, can be reset
+            "paper" - Paper trading mode (simulated)
+            "live" - Live trading mode (real money)
+        """
+        if self.kill_switch_active:
+            return "killed"
+        if self.circuit_breaker.triggered:
+            return "halted"
+        return self.config.mode.value
+
+    def can_execute_trade(self) -> bool:
+        """
+        Check if trading can be executed.
+        This is the ONLY method that should be used to check if trading is allowed.
+
+        Returns:
+            True if live trading can execute orders
+        """
+        return self.get_effective_mode() == "live"
+
+    def are_alerts_enabled(self) -> bool:
+        """
+        Check if alerts should be sent based on mode and explicit setting.
+
+        Defaults:
+            - Paper mode: OFF (unless explicitly enabled)
+            - Live mode: ON (unless explicitly disabled)
+
+        Returns:
+            True if alerts should be sent
+        """
+        # Explicit override takes precedence
+        if self.config.alerts_enabled is not None:
+            return self.config.alerts_enabled
+
+        # Mode-based defaults
+        return self.config.mode == TradingMode.LIVE
+
+    def set_alerts_enabled(self, enabled: bool):
+        """Explicitly set alert status"""
+        self.config.alerts_enabled = enabled
+        logger.info(f"Alerts {'enabled' if enabled else 'disabled'}")
         self._save_state()
 
     # -------------------------------------------------------------------------
@@ -1003,14 +1061,29 @@ class LiveTradingEngine:
     # ALERTS
     # -------------------------------------------------------------------------
 
-    async def _send_alert(self, title: str, message: str):
-        """Send alert via configured channels (non-blocking)"""
+    async def _send_alert(self, title: str, message: str, force: bool = False):
+        """
+        Send alert via configured channels (non-blocking).
+
+        Args:
+            title: Alert title
+            message: Alert message
+            force: If True, send regardless of alerts_enabled setting
+                   (used for critical alerts like KILL SWITCH)
+        """
         full_message = f"[{title}] {message}"
         logger.info(f"ALERT: {full_message}")
 
-        # Fire callback
+        # Fire callback (always - for UI updates)
         if self.on_alert:
             self.on_alert(title, message)
+
+        # Check if external alerts should be sent
+        # Critical alerts (KILL SWITCH, CIRCUIT BREAKER, mode changes) always send
+        is_critical = any(x in title.upper() for x in ["KILL", "CIRCUIT", "MODE", "LIVE", "RESUME"])
+        if not force and not is_critical and not self.are_alerts_enabled():
+            logger.debug(f"Alert skipped (alerts disabled): {title}")
+            return
 
         # Send alerts concurrently to avoid blocking
         tasks = []
@@ -1038,6 +1111,93 @@ class LiveTradingEngine:
                     logger.warning(f"Telegram API returned {response.status_code}: {response.text}")
         except Exception as e:
             logger.error(f"Telegram alert failed: {e}")
+
+    async def handle_telegram_command(self, text: str, chat_id: str) -> str:
+        """
+        Handle incoming Telegram commands.
+
+        Supported commands:
+            /kill - Activate kill switch
+            /status - Get current status
+            /resume - Deactivate kill switch (requires confirmation)
+
+        Args:
+            text: The message text from Telegram
+            chat_id: The chat ID the message came from
+
+        Returns:
+            Response message to send back
+        """
+        # Verify chat_id matches configured chat
+        if chat_id != self.config.telegram_chat_id:
+            logger.warning(f"Telegram command from unauthorized chat: {chat_id}")
+            return "Unauthorized"
+
+        text = text.strip().lower()
+
+        if text == "/kill":
+            await self.activate_kill_switch("Telegram /kill command")
+            return (
+                "🛑 KILL SWITCH ACTIVATED\n\n"
+                "All trading has been halted immediately.\n"
+                "Use /resume to restart trading."
+            )
+
+        elif text == "/status":
+            effective_mode = self.get_effective_mode()
+            alerts_on = self.are_alerts_enabled()
+            positions = len(self.open_positions)
+            balance = self.get_wallet_balance()
+
+            status_emoji = {
+                "killed": "🛑",
+                "halted": "⚠️",
+                "paper": "📝",
+                "live": "🔴",
+            }.get(effective_mode, "❓")
+
+            return (
+                f"{status_emoji} Status: {effective_mode.upper()}\n\n"
+                f"Mode: {self.config.mode.value}\n"
+                f"Kill Switch: {'ON' if self.kill_switch_active else 'OFF'}\n"
+                f"Circuit Breaker: {'TRIGGERED' if self.circuit_breaker.triggered else 'OK'}\n"
+                f"Alerts: {'ON' if alerts_on else 'OFF'}\n"
+                f"Open Positions: {positions}\n"
+                f"Balance: ${balance.get('usdc_balance', 0):,.2f}"
+            )
+
+        elif text == "/resume":
+            if not self.kill_switch_active and not self.circuit_breaker.triggered:
+                return "Trading is already active."
+            await self.deactivate_kill_switch()
+            return (
+                "✅ TRADING RESUMED\n\n"
+                f"Mode: {self.config.mode.value.upper()}\n"
+                "Kill switch deactivated."
+            )
+
+        elif text == "/alerts on":
+            self.set_alerts_enabled(True)
+            return "🔔 Alerts ENABLED"
+
+        elif text == "/alerts off":
+            self.set_alerts_enabled(False)
+            return "🔕 Alerts DISABLED"
+
+        elif text in ("/help", "/start"):
+            return (
+                "🤖 Cassandra Trading Bot\n\n"
+                "Commands:\n"
+                "/status - Current trading status\n"
+                "/kill - Emergency stop all trading\n"
+                "/resume - Resume trading after kill\n"
+                "/alerts on - Enable alerts\n"
+                "/alerts off - Disable alerts\n"
+                "/help - Show this message"
+            )
+
+        else:
+            return "Unknown command. Use /help for available commands."
 
     async def _send_discord(self, message: str):
         """Send Discord webhook message (non-blocking)"""

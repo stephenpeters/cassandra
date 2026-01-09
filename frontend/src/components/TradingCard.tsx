@@ -418,36 +418,15 @@ function TradingCardComponent({
               </div>
             </div>
 
-            {/* Set Allowances - Live mode only */}
-            {onSetAllowances && (
-              <div className="p-3 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg col-span-2">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-zinc-500">Token Allowances</span>
-                  <button
-                    onClick={handleSetAllowances}
-                    disabled={allowancesLoading || !apiKey}
-                    className="px-2 py-1 text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-600 dark:text-amber-400 rounded disabled:opacity-50 transition-colors"
-                  >
-                    {allowancesLoading ? "Setting..." : "Set Allowances"}
-                  </button>
-                </div>
-                {allowancesResult && (
-                  <div className={`text-xs ${allowancesResult.success ? "text-green-500" : "text-red-500"}`}>
-                    {allowancesResult.success ? "✓ Allowances set!" : `✗ ${allowancesResult.error}`}
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Manual Order - Live mode only */}
             {onManualOrder && (
               <div className="p-3 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg col-span-2">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs text-zinc-500">Manual Order</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs text-zinc-500">Manual Order</span>
                   {markets15m?.active?.[manualSymbol] && (
-                    <div className="text-xs font-mono bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded">
-                      {manualSymbol.toLowerCase()}-updown-15m-{markets15m.active[manualSymbol].start_time}
-                    </div>
+                    <span className="text-xs font-mono text-zinc-600 dark:text-zinc-300">
+                      — {formatSlug(`${manualSymbol.toLowerCase()}-updown-15m-${markets15m.active[manualSymbol].start_time}`)}
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">

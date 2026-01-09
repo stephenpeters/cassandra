@@ -3,11 +3,12 @@
 import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FlipCountdownCompact } from "@/components/ui/flip-countdown";
+import { CountdownTimerBadgeCompact } from "@/components/ui/countdown-timer-badge";
 import { SimpleTooltip } from "@/components/ui/tooltip";
 import { SimpleStreamingChart } from "@/components/charts/SimpleStreamingChart";
 import { MarketAnalysis } from "@/components/charts/MarketAnalysis";
 import { IndicatorGauges } from "@/components/charts/IndicatorGauges";
+import { CompactIndicatorPanel } from "@/components/charts/CompactIndicatorPanel";
 import type {
   Markets15MinData,
   MomentumSignal,
@@ -17,7 +18,7 @@ import type {
   Position,
   TradingSignal,
 } from "@/types";
-import { TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 
 interface PolymarketDashboardProps {
   markets15m: Markets15MinData | null;
@@ -31,40 +32,19 @@ interface PolymarketDashboardProps {
   signals?: TradingSignal[];  // Trading signals to display on chart
 }
 
-// Only BTC, ETH, SOL have volume
-const ACTIVE_SYMBOLS = ["BTC", "ETH", "SOL"];
+// Only BTC and ETH have sufficient volume (>$20K)
+const ACTIVE_SYMBOLS = ["BTC", "ETH"];
 
-function formatCountdown(seconds: number): string {
-  if (seconds <= 0) return "LIVE";
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-function formatElapsed(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}m${secs.toString().padStart(2, "0")}s`;
-}
-
-function formatTimeWindow(startTime: number, endTime: number): string {
-  const start = new Date(startTime * 1000);
-  const end = new Date(endTime * 1000);
-  const formatTime = (d: Date) => d.toLocaleTimeString("en-US", {
-    hour: "2-digit",
+function formatMarketSlugET(symbol: string, startTime: number): string {
+  // Format: "BTC @ 7:15 AM ET"
+  const date = new Date(startTime * 1000);
+  const timeStr = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
+    hour12: true,
+    timeZone: "America/New_York",
   });
-  return `${formatTime(start)}-${formatTime(end)}`;
-}
-
-function formatMarketTime(timestamp: number): string {
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return `${symbol} @ ${timeStr} ET`;
 }
 
 export function PolymarketDashboard({
@@ -79,7 +59,7 @@ export function PolymarketDashboard({
   signals = [],
 }: PolymarketDashboardProps) {
   const [now, setNow] = useState(Date.now());
-  const [showAllTrades, setShowAllTrades] = useState(false);
+  const [compactIndicators, setCompactIndicators] = useState(true);
 
   // Update time every second
   useEffect(() => {
@@ -90,38 +70,13 @@ export function PolymarketDashboard({
   const timing = markets15m?.timing;
   const activeMarkets = markets15m?.active || {};
 
-  // Calculate countdown to next market
-  const countdown = useMemo(() => {
-    if (!timing) return 0;
-    return Math.max(0, timing.time_until_start);
-  }, [timing]);
-
   // Get current market for selected symbol
   const currentMarket = activeMarkets[selectedSymbol];
 
-  // Time remaining in current window
-  const timeRemainingInWindow = useMemo(() => {
-    if (!timing?.is_open || !currentMarket) return 0;
-    const now_sec = Math.floor(Date.now() / 1000);
-    return Math.max(0, currentMarket.end_time - now_sec);
-  }, [timing, currentMarket, now]);
-
-  // Time elapsed in current window
-  const timeElapsedInWindow = useMemo(() => {
-    if (!timing?.is_open || !currentMarket) return 0;
-    const now_sec = Math.floor(Date.now() / 1000);
-    return Math.max(0, now_sec - currentMarket.start_time);
-  }, [timing, currentMarket, now]);
-
-  // Get position for selected symbol
+  // Get position for selected symbol (only show positions for current market)
   const symbolPosition = positions.find(
     (p) => p.symbol === selectedSymbol && currentMarket && p.market_start === currentMarket.start_time
   );
-
-  // Get trades for selected symbol (recent 10)
-  const symbolTrades = useMemo(() => {
-    return marketTrades.filter((t) => t.symbol === selectedSymbol).slice(0, 10);
-  }, [marketTrades, selectedSymbol]);
 
   // Get momentum and orderbook for selected symbol
   const selectedMomentum = momentum[`${selectedSymbol}USDT`];
@@ -129,49 +84,14 @@ export function PolymarketDashboard({
 
   return (
     <div className="space-y-4">
-      {/* Header with timer */}
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200">
-            Polymarket
-          </h2>
-          {timing?.is_open && currentMarket && (
-            <span className="text-xs text-zinc-500 font-mono">
-              {formatTimeWindow(currentMarket.start_time, currentMarket.end_time)}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-sm">
-            <Clock className="w-4 h-4 text-zinc-400" />
-            {timing?.is_open ? (
-              <div className="flex items-center gap-2">
-                <SimpleTooltip content="Time elapsed in current window">
-                  <span className="font-mono text-purple-500">
-                    @ {formatElapsed(timeElapsedInWindow)}
-                  </span>
-                </SimpleTooltip>
-                <span className="text-zinc-400">|</span>
-                <SimpleTooltip content="Time remaining in window">
-                  <div className="text-blue-500 flex items-center gap-1">
-                    <FlipCountdownCompact seconds={timeRemainingInWindow} />
-                    <span className="text-xs">left</span>
-                  </div>
-                </SimpleTooltip>
-              </div>
-            ) : (
-              <SimpleTooltip content="Time until next market opens">
-                <div className="text-zinc-500 flex items-center gap-1">
-                  <span className="text-xs">Next in</span>
-                  <FlipCountdownCompact seconds={countdown} />
-                </div>
-              </SimpleTooltip>
-            )}
-          </div>
-          {timing?.is_open && (
-            <Badge className="bg-green-500/20 text-green-400 text-xs">LIVE</Badge>
-          )}
-        </div>
+        <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200">
+          Markets
+        </h2>
+        {timing?.is_open && (
+          <Badge className="bg-green-500/20 text-green-400 text-xs">LIVE</Badge>
+        )}
       </div>
 
       {/* Summary cards - 3 columns */}
@@ -197,49 +117,33 @@ export function PolymarketDashboard({
             >
               {/* Header row */}
               <div className="flex items-center justify-between mb-1">
-                <div>
+                <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm">{sym}</span>
-                  {market && (
-                    <span className="text-[10px] text-zinc-400 ml-1 font-mono">
-                      {formatMarketTime(market.start_time)}
-                    </span>
+                  {momo && (
+                    <Badge
+                      className={`text-[10px] ${
+                        momo.direction === "UP"
+                          ? "bg-green-500/20 text-green-400"
+                          : momo.direction === "DOWN"
+                          ? "bg-red-500/20 text-red-400"
+                          : "bg-zinc-600/20 text-zinc-400"
+                      }`}
+                    >
+                      {momo.direction === "UP" ? (
+                        <TrendingUp className="w-3 h-3" />
+                      ) : momo.direction === "DOWN" ? (
+                        <TrendingDown className="w-3 h-3" />
+                      ) : null}
+                    </Badge>
                   )}
                 </div>
-                {momo && (
-                  <Badge
-                    className={`text-[10px] ${
-                      momo.direction === "UP"
-                        ? "bg-green-500/20 text-green-400"
-                        : momo.direction === "DOWN"
-                        ? "bg-red-500/20 text-red-400"
-                        : "bg-zinc-600/20 text-zinc-400"
-                    }`}
-                  >
-                    {momo.direction === "UP" ? (
-                      <TrendingUp className="w-3 h-3" />
-                    ) : momo.direction === "DOWN" ? (
-                      <TrendingDown className="w-3 h-3" />
-                    ) : null}
-                  </Badge>
-                )}
-              </div>
-
-              {/* Mini chart or placeholder */}
-              <div className="h-12 mb-2 bg-zinc-200 dark:bg-zinc-700/50 rounded overflow-hidden">
-                {timing?.is_open && symChartData && symChartData.data.length > 0 ? (
-                  <SimpleStreamingChart
-                    symbol={sym}
-                    data={symChartData.data}
-                    startPrice={symChartData.start_price}
-                    height={48}
-                    marketStart={market?.start_time}
-                    marketEnd={market?.end_time}
-                    showPriceToBeat={false}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-[10px] text-zinc-400">
-                    {timing?.is_open ? "Loading..." : "—"}
-                  </div>
+                {/* Countdown timer badge - show time remaining */}
+                {timing?.is_open && market && (
+                  <SimpleTooltip content="Time remaining until market closes">
+                    <CountdownTimerBadgeCompact
+                      seconds={Math.max(0, market.end_time - Math.floor(now / 1000))}
+                    />
+                  </SimpleTooltip>
                 )}
               </div>
 
@@ -284,18 +188,22 @@ export function PolymarketDashboard({
       {/* Detail view for selected symbol */}
       <Card className="bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
         <CardContent className="p-4 space-y-4">
-          {/* Symbol header */}
+          {/* Market header with readable slug */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-lg">{selectedSymbol}</span>
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-lg">
+                {currentMarket
+                  ? formatMarketSlugET(selectedSymbol, currentMarket.start_time)
+                  : selectedSymbol}
+              </span>
               {selectedMomentum && (
                 <Badge
                   className={`${
                     selectedMomentum.direction === "UP"
-                      ? "bg-green-500/20 text-green-400"
+                      ? "bg-green-500 text-white"
                       : selectedMomentum.direction === "DOWN"
-                      ? "bg-red-500/20 text-red-400"
-                      : "bg-zinc-600/20 text-zinc-400"
+                      ? "bg-red-500 text-white"
+                      : "bg-zinc-600 text-white"
                   }`}
                 >
                   {selectedMomentum.direction}
@@ -354,19 +262,51 @@ export function PolymarketDashboard({
             )}
           </div>
 
-          {/* Market Analysis */}
-          <MarketAnalysis
-            symbol={selectedSymbol}
-            momentum={selectedMomentum}
-            orderbook={selectedOrderbook}
-          />
-
-          {/* Technical Indicator Gauges */}
+          {/* Market Indicators - Compact or Full */}
           <div>
-            <div className="text-xs font-medium text-zinc-500 mb-2">Indicator Gauges</div>
-            <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-3">
-              <IndicatorGauges momentum={selectedMomentum} />
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-medium text-zinc-500">Market Indicators</div>
+              <SimpleTooltip content={compactIndicators ? "Show full indicator details" : "Show compact single-row view"}>
+                <button
+                  onClick={() => setCompactIndicators(!compactIndicators)}
+                  className="text-[10px] text-blue-500 hover:text-blue-400 flex items-center gap-1"
+                >
+                  {compactIndicators ? (
+                    <>
+                      <ChevronDown className="w-3 h-3" /> Expand
+                    </>
+                  ) : (
+                    <>
+                      <ChevronUp className="w-3 h-3" /> Compact
+                    </>
+                  )}
+                </button>
+              </SimpleTooltip>
             </div>
+
+            {compactIndicators ? (
+              /* Compact single-row view */
+              <CompactIndicatorPanel
+                symbol={selectedSymbol}
+                momentum={selectedMomentum}
+                orderbook={selectedOrderbook}
+              />
+            ) : (
+              /* Full expanded view */
+              <div className="space-y-3">
+                <MarketAnalysis
+                  symbol={selectedSymbol}
+                  momentum={selectedMomentum}
+                  orderbook={selectedOrderbook}
+                />
+                <div>
+                  <div className="text-xs font-medium text-zinc-500 mb-2">Indicator Gauges</div>
+                  <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-3">
+                    <IndicatorGauges momentum={selectedMomentum} />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Open Position */}
@@ -393,58 +333,6 @@ export function PolymarketDashboard({
             )}
           </div>
 
-          {/* Recent Trades */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-medium text-zinc-500">Recent Trades</div>
-              <button
-                onClick={() => setShowAllTrades(!showAllTrades)}
-                className="text-xs text-zinc-400 hover:text-zinc-300 flex items-center gap-1"
-              >
-                {showAllTrades ? "Show less" : "Show more"}
-                {showAllTrades ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              </button>
-            </div>
-            {symbolTrades.length > 0 ? (
-              <div className={`space-y-1 ${showAllTrades ? "" : "max-h-24"} overflow-y-auto`}>
-                {symbolTrades.slice(0, showAllTrades ? 10 : 4).map((trade, i) => (
-                  <div
-                    key={`${trade.timestamp}-${i}`}
-                    className="flex items-center justify-between text-xs p-2 bg-zinc-100 dark:bg-zinc-800/30 rounded"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        className={`text-[10px] ${
-                          trade.side === "BUY"
-                            ? "bg-green-500/20 text-green-400"
-                            : "bg-red-500/20 text-red-400"
-                        }`}
-                      >
-                        {trade.side}
-                      </Badge>
-                      <Badge
-                        className={`text-[10px] ${
-                          trade.outcome === "Up"
-                            ? "bg-green-500/10 text-green-300"
-                            : "bg-red-500/10 text-red-300"
-                        }`}
-                      >
-                        {trade.outcome}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-zinc-400">${trade.usd_value.toFixed(0)}</span>
-                      <span className="text-zinc-500 font-mono">
-                        {formatMarketTime(trade.timestamp)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-zinc-400 italic">No recent trades</div>
-            )}
-          </div>
         </CardContent>
       </Card>
 

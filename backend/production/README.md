@@ -211,29 +211,62 @@ Add to crontab:
 
 ## Live Trading Wallet Setup
 
-### Important: Polymarket API Trading Requirements
+### Overview: Two Wallet Setup Options
 
-Polymarket's CLOB (Central Limit Order Book) API **only works with EOA wallets** (Externally Owned Accounts), not embedded/smart contract wallets. This means:
+Polymarket supports two wallet configurations for API trading:
 
-- **DO NOT** use the embedded wallet that Polymarket creates for you when you sign up
-- **DO NOT** try to fund your Polymarket "deposit address" for API trading
-- **MUST** create a fresh EOA wallet (e.g., in MetaMask) and fund it directly
+| Method | Signature Type | Best For |
+|--------|---------------|----------|
+| **Proxy Wallet** | 2 | **Recommended** - use Polymarket.com deposit flow |
+| **EOA Direct** | 0 | Simple setup, funds directly in wallet |
 
-### 1. Create a Trading Wallet (MetaMask Recommended)
+### Option A: Proxy Wallet Setup (Recommended)
+
+This uses Polymarket's proxy wallet system, created when you deposit via their website.
 
 ```bash
-# Option 1: MetaMask Browser Extension (Recommended)
-# 1. Install MetaMask from https://metamask.io
-# 2. Create a new wallet or import an existing one
-# 3. Add Polygon network:
-#    - Network Name: Polygon Mainnet
-#    - RPC URL: https://polygon-rpc.com
-#    - Chain ID: 137
-#    - Currency Symbol: POL
-#    - Block Explorer: https://polygonscan.com
+# 1. Create a fresh MetaMask wallet (don't use your main wallet!)
+#    - Install MetaMask from https://metamask.io
+#    - Create new wallet, save seed phrase securely
+#    - Add Polygon network (Chain ID: 137, RPC: https://polygon-rpc.com)
 
-# Option 2: Generate via Python
+# 2. Go to https://polymarket.com and connect your MetaMask
+
+# 3. Click "Deposit" - this creates your proxy wallet
+#    Note the deposit address shown - this is your PROXY WALLET address
+
+# 4. Fund via card, crypto, or bridge
+
+# Example addresses after setup:
+# - MetaMask (signer): 0x55e7A3896E4f790a6F111b71B7F99d4190E11298
+# - Proxy (maker):     0x21f6163c35B3B2523a4db1cf61B33E55b8e071b1
+```
+
+**Configure .env for Proxy Wallet:**
+```bash
+POLYMARKET_PRIVATE_KEY=your_metamask_private_key_no_0x_prefix
+POLYMARKET_SIGNATURE_TYPE=2
+POLYMARKET_FUNDER=0xYourProxyWalletAddress
+```
+
+### Option B: EOA Direct Setup
+
+Fund your MetaMask wallet directly with USDC.e (not via Polymarket website).
+
+```bash
+# 1. Create a fresh MetaMask wallet
+# 2. Add Polygon network (Chain ID: 137)
+# 3. Transfer POL (for gas) and USDC.e directly to this wallet
+
+# Generate wallet via Python (alternative):
 python3 -c "from eth_account import Account; a=Account.create(); print(f'Address: {a.address}\\nPrivate Key: {a.key.hex()[2:]}')"
+```
+
+**Configure .env for EOA Direct:**
+```bash
+POLYMARKET_PRIVATE_KEY=your_private_key_no_0x_prefix
+POLYMARKET_SIGNATURE_TYPE=0
+# No POLYMARKET_FUNDER needed - the signer address is used as maker
 ```
 
 ### 2. Fund Your Wallet with POL (for gas)

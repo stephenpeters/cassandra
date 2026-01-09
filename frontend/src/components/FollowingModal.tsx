@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { X, Users, TrendingUp, Play, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { X, Users, TrendingUp, Play, Loader2, ToggleLeft, ToggleRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { SimpleTooltip } from "@/components/ui/tooltip";
 import type { WhaleInfo, WhaleTrade } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 interface BacktestResult {
   whale_name: string;
@@ -56,6 +58,56 @@ export function FollowingModal({
   const [backtestDays, setBacktestDays] = useState(7);
   const [realPnL, setRealPnL] = useState<RealPositionPnL | null>(null);
   const [realPnLLoading, setRealPnLLoading] = useState(false);
+  const [enabledTraders, setEnabledTraders] = useState<Record<string, boolean>>({});
+  const [togglingTrader, setTogglingTrader] = useState<string | null>(null);
+
+  // Fetch trader enabled states from strategy API
+  const fetchTraderStates = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/strategies/copy_trading/traders`);
+      if (res.ok) {
+        const data = await res.json();
+        const states: Record<string, boolean> = {};
+        for (const trader of data.traders || []) {
+          states[trader.name] = trader.enabled;
+        }
+        setEnabledTraders(states);
+      }
+    } catch (e) {
+      console.error("Failed to fetch trader states:", e);
+    }
+  }, []);
+
+  // Toggle trader enabled state
+  const toggleTrader = async (traderName: string, enabled: boolean) => {
+    setTogglingTrader(traderName);
+    try {
+      const res = await fetch(
+        `${API_URL}/api/strategies/copy_trading/traders/${traderName}/enable?enabled=${enabled}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": API_KEY,
+          },
+        }
+      );
+      if (res.ok) {
+        setEnabledTraders((prev) => ({ ...prev, [traderName]: enabled }));
+      }
+    } catch (e) {
+      console.error("Failed to toggle trader:", e);
+    } finally {
+      setTogglingTrader(null);
+    }
+  };
+
+  // Fetch trader states on mount
+  useEffect(() => {
+    if (isOpen) {
+      fetchTraderStates();
+    }
+  }, [isOpen, fetchTraderStates]);
 
   // Fetch real position P&L when whale is selected
   const fetchRealPnL = async (whaleName: string) => {
@@ -127,9 +179,9 @@ export function FollowingModal({
         <div className="flex items-center justify-between p-4 border-b border-zinc-200 dark:border-zinc-700">
           <div className="flex items-center gap-2">
             <Users className="w-5 h-5 text-cyan-500" />
-            <h2 className="text-lg font-semibold">Following</h2>
+            <h2 className="text-lg font-semibold">Copy Trading</h2>
             <Badge variant="outline" className="text-xs">
-              {whales.length} whales
+              {whales.length} traders
             </Badge>
           </div>
           <button
@@ -142,7 +194,7 @@ export function FollowingModal({
 
         {/* Content */}
         <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
-          {/* Whale selector */}
+          {/* Trader selector */}
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => onWhaleSelect(null)}
@@ -172,38 +224,79 @@ export function FollowingModal({
             ))}
           </div>
 
-          {/* Whale cards */}
+          {/* Trader cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {whales
               .filter((w) => !selectedWhale || w.name === selectedWhale)
-              .map((whale) => (
-                <div
-                  key={whale.name}
-                  className={`p-3 rounded-lg border transition-all cursor-pointer ${
-                    selectedWhale === whale.name
-                      ? "border-cyan-500 bg-cyan-50 dark:bg-cyan-900/20"
-                      : "border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-600"
-                  }`}
-                  onClick={() =>
-                    onWhaleSelect(selectedWhale === whale.name ? null : whale.name)
-                  }
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-cyan-600 dark:text-cyan-400">
-                      {whale.name}
-                    </span>
-                    <Badge variant="outline" className="text-xs">
-                      {whaleTradeCount[whale.name] || 0} trades
-                    </Badge>
+              .map((whale) => {
+                const isEnabled = enabledTraders[whale.name] ?? true;
+                const isToggling = togglingTrader === whale.name;
+
+                return (
+                  <div
+                    key={whale.name}
+                    className={`p-3 rounded-lg border transition-all ${
+                      selectedWhale === whale.name
+                        ? "border-cyan-500 bg-cyan-50 dark:bg-cyan-900/20"
+                        : "border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-600"
+                    } ${!isEnabled ? "opacity-60" : ""}`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <button
+                        className="font-medium text-cyan-600 dark:text-cyan-400 hover:underline"
+                        onClick={() =>
+                          onWhaleSelect(selectedWhale === whale.name ? null : whale.name)
+                        }
+                      >
+                        {whale.name}
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {whaleTradeCount[whale.name] || 0} trades
+                        </Badge>
+                        {/* Enable/Disable Toggle */}
+                        <SimpleTooltip content={isEnabled ? "Disable copy trading" : "Enable copy trading"}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTrader(whale.name, !isEnabled);
+                            }}
+                            disabled={isToggling}
+                            className={`transition-colors ${
+                              isToggling ? "opacity-50" : "hover:opacity-80"
+                            }`}
+                          >
+                            {isToggling ? (
+                              <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
+                            ) : isEnabled ? (
+                              <ToggleRight className="w-5 h-5 text-green-500" />
+                            ) : (
+                              <ToggleLeft className="w-5 h-5 text-zinc-400" />
+                            )}
+                          </button>
+                        </SimpleTooltip>
+                      </div>
+                    </div>
+                    <div className="text-xs font-mono text-zinc-500 mb-2">
+                      {whale.address}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      {whale.strategy && (
+                        <div className="text-xs text-zinc-400">{whale.strategy}</div>
+                      )}
+                      <Badge
+                        className={`text-[10px] ${
+                          isEnabled
+                            ? "bg-green-500/20 text-green-600"
+                            : "bg-zinc-500/20 text-zinc-500"
+                        }`}
+                      >
+                        {isEnabled ? "Active" : "Disabled"}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="text-xs font-mono text-zinc-500 mb-2">
-                    {whale.address}
-                  </div>
-                  {whale.strategy && (
-                    <div className="text-xs text-zinc-400">{whale.strategy}</div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
           </div>
 
           {/* Real Position P&L - Primary display */}

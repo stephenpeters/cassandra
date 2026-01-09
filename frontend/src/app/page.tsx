@@ -66,11 +66,8 @@ export default function Home() {
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">
-              Cassandra
+              Cassandra Polymarket Crypto Bot
             </h1>
-            <Badge variant="outline" className="text-xs">
-              15-Min Crypto Markets
-            </Badge>
           </div>
           <div className="flex items-center gap-3">
             {/* History button */}
@@ -81,18 +78,7 @@ export default function Home() {
               <Database className="w-4 h-4 text-purple-500" />
               <span className="hidden sm:inline">History</span>
             </button>
-            {/* Following button */}
-            <button
-              onClick={() => setFollowingOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors text-sm"
-            >
-              <Users className="w-4 h-4 text-cyan-500" />
-              <span className="hidden sm:inline">Following</span>
-              <Badge variant="outline" className="text-[10px] ml-1">
-                {whales.length}
-              </Badge>
-            </button>
-            {/* Strategy button */}
+            {/* Strategy button (includes Copy Trading) */}
             <button
               onClick={() => setStrategyOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors text-sm"
@@ -156,12 +142,12 @@ export default function Home() {
           }}
         />
 
-        {/* Whale Trades - Simplified */}
+        {/* Copy Trades - Simplified */}
         <Card className="bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-4">
               <CardTitle className="text-lg text-zinc-800 dark:text-zinc-200">
-                Whale Trades
+                Copy Trades
               </CardTitle>
               <div className="flex items-center gap-2 flex-wrap">
                 <button

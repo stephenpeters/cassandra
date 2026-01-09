@@ -1581,7 +1581,7 @@ class TradingEngine:
             signal_type = SignalType.BUY_DOWN
 
         # Create checkpoint string for tracking
-        checkpoint_str = f"whale:{whale_name}"
+        checkpoint_str = f"copy:{whale_name}"
 
         # Build momentum dict for signal
         momentum = {

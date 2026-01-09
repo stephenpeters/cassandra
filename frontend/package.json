@@ -7,7 +7,14 @@
     "build": "next build",
     "build:prod": "NEXT_PUBLIC_WS_URL=wss://$DOMAIN/ws NEXT_PUBLIC_API_URL=https://$DOMAIN next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ci": "playwright test homepage.spec.ts dashboard.spec.ts",
+    "test:visual": "playwright test visual-regression.spec.ts",
+    "test:visual:update": "playwright test visual-regression.spec.ts --update-snapshots",
+    "test:visual:headed": "playwright test visual-regression.spec.ts --headed"
   },
   "dependencies": {
     "@radix-ui/react-scroll-area": "^1.2.10",
@@ -27,6 +34,7 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

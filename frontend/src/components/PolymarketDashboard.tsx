@@ -200,14 +200,14 @@ export function PolymarketDashboard({
               </SimpleTooltip>
             )}
             {currentMarket && (
-              <div className="flex items-center gap-3 text-sm">
+              <div className="flex items-center gap-3 text-lg">
                 <SimpleTooltip content={`UP token price: $${currentMarket.price.toFixed(3)} - implied ${(currentMarket.price * 100).toFixed(1)}% chance of price increase`}>
-                  <span className="text-green-500 font-mono font-bold cursor-help">
+                  <span className="text-green-500 font-mono font-semibold cursor-help">
                     UP: ${currentMarket.price.toFixed(2)}
                   </span>
                 </SimpleTooltip>
                 <SimpleTooltip content={`DOWN token price: $${(1 - currentMarket.price).toFixed(3)} - implied ${((1 - currentMarket.price) * 100).toFixed(1)}% chance of price decrease`}>
-                  <span className="text-red-500 font-mono font-bold cursor-help">
+                  <span className="text-red-500 font-mono font-semibold cursor-help">
                     DOWN: ${(1 - currentMarket.price).toFixed(2)}
                   </span>
                 </SimpleTooltip>

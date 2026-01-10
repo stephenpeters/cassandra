@@ -49,8 +49,6 @@ function MarketWindowChartComponent({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const binanceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const upSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const downSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceToBeatSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const { theme } = useTheme();
 
@@ -145,10 +143,7 @@ function MarketWindowChartComponent({
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       rightPriceScale: {
-        borderColor: colors.border,
-        visible: true,
-        autoScale: false,
-        scaleMargins: { top: 0.1, bottom: 0.1 },
+        visible: false,
       },
     });
 
@@ -163,34 +158,6 @@ function MarketWindowChartComponent({
         minMove: 1,
       },
       title: symbol,
-    });
-
-    // UP price series (right axis) - green
-    const upSeries = chart.addSeries(LineSeries, {
-      color: "#22c55e",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceScaleId: "right",
-      priceFormat: {
-        type: "price",
-        precision: 2,
-        minMove: 0.01,
-      },
-      title: "UP",
-    });
-
-    // DOWN price series (right axis) - red
-    const downSeries = chart.addSeries(LineSeries, {
-      color: "#ef4444",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceScaleId: "right",
-      priceFormat: {
-        type: "price",
-        precision: 2,
-        minMove: 0.01,
-      },
-      title: "DOWN",
     });
 
     // "Price to Beat" horizontal line (dashed) - the opening price
@@ -214,16 +181,8 @@ function MarketWindowChartComponent({
       scaleMargins: { top: 0.05, bottom: 0.05 },
     });
 
-    // Configure right price scale (Polymarket 0-1)
-    chart.priceScale("right").applyOptions({
-      autoScale: false,
-      scaleMargins: { top: 0.05, bottom: 0.05 },
-    });
-
     chartRef.current = chart;
     binanceSeriesRef.current = binanceSeries;
-    upSeriesRef.current = upSeries;
-    downSeriesRef.current = downSeries;
     priceToBeatSeriesRef.current = priceToBeatSeries;
 
     // Handle resize
@@ -252,22 +211,14 @@ function MarketWindowChartComponent({
       autoScale: true,
       scaleMargins: { top: 0.1, bottom: 0.1 },
     });
-
-    // Set Polymarket price range (0-1) - use autoScale
-    chartRef.current.priceScale("right").applyOptions({
-      autoScale: true,
-      scaleMargins: { top: 0.1, bottom: 0.1 },
-    });
   }, [priceRangeCalc]);
 
   // Update data and set fixed time range
   useEffect(() => {
-    if (!binanceSeriesRef.current || !upSeriesRef.current || !downSeriesRef.current || !chartRef.current) return;
+    if (!binanceSeriesRef.current || !chartRef.current) return;
 
     if (data.length === 0) {
       binanceSeriesRef.current.setData([]);
-      upSeriesRef.current.setData([]);
-      downSeriesRef.current.setData([]);
       if (priceToBeatSeriesRef.current) priceToBeatSeriesRef.current.setData([]);
       return;
     }
@@ -277,19 +228,7 @@ function MarketWindowChartComponent({
       value: d.binancePrice,
     }));
 
-    const upData: LineData<Time>[] = data.map((d) => ({
-      time: d.time as Time,
-      value: d.upPrice,
-    }));
-
-    const downData: LineData<Time>[] = data.map((d) => ({
-      time: d.time as Time,
-      value: d.downPrice,
-    }));
-
     binanceSeriesRef.current.setData(binanceData);
-    upSeriesRef.current.setData(upData);
-    downSeriesRef.current.setData(downData);
 
     // Set "Price to Beat" horizontal line at startPrice
     if (priceToBeatSeriesRef.current && showPriceToBeat && startPrice && marketStart && marketEnd) {
@@ -379,22 +318,6 @@ function MarketWindowChartComponent({
               </span>
             </span>
           )}
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-0.5 bg-green-500 rounded"></span>
-            <span className="text-zinc-500">UP</span>
-            {currentValues && (
-              <span className="font-mono text-green-500">{(currentValues.up * 100).toFixed(0)}%</span>
-            )}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-0.5 bg-red-500 rounded"></span>
-            <span className="text-zinc-500">DN</span>
-            {currentValues && (
-              <span className="font-mono text-red-500">{(currentValues.down * 100).toFixed(0)}%</span>
-            )}
-          </span>
         </div>
       </div>
 

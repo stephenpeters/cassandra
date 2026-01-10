@@ -287,22 +287,40 @@ export function useWebSocket(): UseWebSocketReturn {
         // Real-time price update from Polymarket WebSocket
         if (msg.data) {
           const update = msg.data as PMPriceUpdate;
+
+          // Update market price badges
           setMarkets15m((prev) => {
             if (!prev?.active?.[update.symbol]) return prev;
-
-            // Update the market's price based on outcome
             const market = prev.active[update.symbol];
             const newPrice = update.outcome === "UP" ? update.price : market.price;
-
             return {
               ...prev,
               active: {
                 ...prev.active,
-                [update.symbol]: {
-                  ...market,
-                  price: newPrice,
-                },
+                [update.symbol]: { ...market, price: newPrice },
               },
+            };
+          });
+
+          // Update chart data in real-time (update last point)
+          setChartData((prev) => {
+            const symbolData = prev[update.symbol];
+            if (!symbolData?.data?.length) return prev;
+
+            const data = [...symbolData.data];
+            const lastPoint = { ...data[data.length - 1] };
+
+            // Update the appropriate price
+            if (update.outcome === "UP") {
+              lastPoint.upPrice = update.price;
+            } else {
+              lastPoint.downPrice = update.price;
+            }
+
+            data[data.length - 1] = lastPoint;
+            return {
+              ...prev,
+              [update.symbol]: { ...symbolData, data },
             };
           });
         }

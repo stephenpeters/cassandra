@@ -613,7 +613,7 @@ async def _startup():
 
     def on_pm_price_update(update: PMPriceUpdate):
         """Handle real-time price update from Polymarket WebSocket"""
-        # Broadcast to frontend for instant chart updates
+        # Broadcast to frontend for instant price updates
         asyncio.create_task(
             broadcast({
                 "type": "pm_price_update",

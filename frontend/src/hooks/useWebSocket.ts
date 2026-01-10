@@ -16,6 +16,11 @@ import type {
   TradingSignal,
   TradingConfig,
   LiveTradingStatus,
+  SniperStatus,
+  SniperSignal,
+  PMPriceUpdate,
+  ModeStatus,
+  TradingModeValue,
 } from "@/types";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
@@ -40,16 +45,17 @@ export interface UseWebSocketReturn {
   paperSignals: TradingSignal[];
   paperConfig: TradingConfig | null;
   liveStatus: LiveTradingStatus | null;
+  currentMode: TradingModeValue;  // 3-way mode: off/paper/live
+  sniperStatus: Record<string, SniperStatus>;  // Status per symbol
+  sniperSignals: SniperSignal[];  // Recent signals
   requestCandles: (symbol: string) => void;
   togglePaperTrading: () => Promise<void>;
   resetTradingAccount: () => Promise<void>;
   factoryReset: () => Promise<void>;
   updatePaperConfig: (config: Partial<TradingConfig>) => Promise<void>;
-  setTradingMode: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  setTradingMode: (mode: TradingModeValue, apiKey: string) => Promise<{ success: boolean; error?: string }>;
   placeTestOrder: (symbol: string, side: "UP" | "DOWN", amount: number, apiKey: string) => Promise<{ success: boolean; error?: string; order?: unknown }>;
   setAllowances: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
-  activateKillSwitch: (reason: string, apiKey: string) => Promise<{ success: boolean; error?: string }>;
-  deactivateKillSwitch: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -73,6 +79,9 @@ export function useWebSocket(): UseWebSocketReturn {
   const [paperSignals, setTradingSignals] = useState<TradingSignal[]>([]);
   const [paperConfig, setPaperConfig] = useState<TradingConfig | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveTradingStatus | null>(null);
+  const [currentMode, setCurrentMode] = useState<TradingModeValue>("paper");
+  const [sniperStatus, setSniperStatus] = useState<Record<string, SniperStatus>>({});
+  const [sniperSignals, setSniperSignals] = useState<SniperSignal[]>([]);
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return;
@@ -247,6 +256,58 @@ export function useWebSocket(): UseWebSocketReturn {
         }
         break;
 
+      case "mode_update":
+        // 3-way mode update from backend (off/paper/live)
+        if (msg.data) {
+          const modeStatus = msg.data as ModeStatus;
+          setCurrentMode(modeStatus.mode);
+        }
+        break;
+
+      case "sniper_status":
+        // Sniper strategy evaluation status per symbol
+        if (msg.data) {
+          const status = msg.data as SniperStatus;
+          setSniperStatus((prev) => ({
+            ...prev,
+            [status.symbol]: status,
+          }));
+        }
+        break;
+
+      case "sniper_signal":
+        // Sniper strategy triggered a signal
+        if (msg.data) {
+          const signal = msg.data as SniperSignal;
+          setSniperSignals((prev) => [signal, ...prev.slice(0, 19)]);
+        }
+        break;
+
+      case "pm_price_update":
+        // Real-time price update from Polymarket WebSocket
+        if (msg.data) {
+          const update = msg.data as PMPriceUpdate;
+          setMarkets15m((prev) => {
+            if (!prev?.active?.[update.symbol]) return prev;
+
+            // Update the market's price based on outcome
+            const market = prev.active[update.symbol];
+            const newPrice = update.outcome === "UP" ? update.price : market.price;
+
+            return {
+              ...prev,
+              active: {
+                ...prev.active,
+                [update.symbol]: {
+                  ...market,
+                  price: newPrice,
+                },
+              },
+            };
+          });
+        }
+        break;
+
       case "ping":
         ws.current?.send(JSON.stringify({ type: "pong" }));
         break;
@@ -332,11 +393,11 @@ export function useWebSocket(): UseWebSocketReturn {
     []
   );
 
-  // Set trading mode (requires API key)
+  // Set trading mode (3-way: off/paper/live, requires API key for paper/live)
   const setTradingMode = useCallback(
-    async (mode: "paper" | "live", apiKey: string): Promise<{ success: boolean; error?: string }> => {
+    async (mode: TradingModeValue, apiKey: string): Promise<{ success: boolean; error?: string }> => {
       try {
-        const res = await fetch(`${API_URL}/api/live-trading/mode`, {
+        const res = await fetch(`${API_URL}/api/mode`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -349,7 +410,10 @@ export function useWebSocket(): UseWebSocketReturn {
 
         if (res.ok) {
           // Update local state
-          setLiveStatus((prev) => prev ? { ...prev, mode } : null);
+          setCurrentMode(mode);
+          if (mode !== "off") {
+            setLiveStatus((prev) => prev ? { ...prev, mode } : null);
+          }
           return { success: true };
         } else {
           return { success: false, error: data.error || "Failed to set mode" };
@@ -420,64 +484,6 @@ export function useWebSocket(): UseWebSocketReturn {
         }
       } catch (e) {
         console.error("Failed to place test order:", e);
-        return { success: false, error: "Network error" };
-      }
-    },
-    []
-  );
-
-  // Activate kill switch (emergency halt)
-  const activateKillSwitch = useCallback(
-    async (reason: string, apiKey: string): Promise<{ success: boolean; error?: string }> => {
-      try {
-        const res = await fetch(`${API_URL}/api/live-trading/kill-switch`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey,
-          },
-          body: JSON.stringify({ activate: true, reason }),
-        });
-
-        const data = await res.json();
-
-        if (res.ok) {
-          setLiveStatus((prev) => prev ? { ...prev, kill_switch_active: true } : null);
-          return { success: true };
-        } else {
-          return { success: false, error: data.error || "Failed to activate kill switch" };
-        }
-      } catch (e) {
-        console.error("Failed to activate kill switch:", e);
-        return { success: false, error: "Network error" };
-      }
-    },
-    []
-  );
-
-  // Deactivate kill switch
-  const deactivateKillSwitch = useCallback(
-    async (apiKey: string): Promise<{ success: boolean; error?: string }> => {
-      try {
-        const res = await fetch(`${API_URL}/api/live-trading/kill-switch`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey,
-          },
-          body: JSON.stringify({ activate: false, reason: "Manual deactivation" }),
-        });
-
-        const data = await res.json();
-
-        if (res.ok) {
-          setLiveStatus((prev) => prev ? { ...prev, kill_switch_active: false } : null);
-          return { success: true };
-        } else {
-          return { success: false, error: data.error || "Failed to deactivate kill switch" };
-        }
-      } catch (e) {
-        console.error("Failed to deactivate kill switch:", e);
         return { success: false, error: "Network error" };
       }
     },
@@ -570,6 +576,9 @@ export function useWebSocket(): UseWebSocketReturn {
     paperSignals,
     paperConfig,
     liveStatus,
+    currentMode,
+    sniperStatus,
+    sniperSignals,
     requestCandles,
     togglePaperTrading,
     resetTradingAccount,
@@ -578,7 +587,5 @@ export function useWebSocket(): UseWebSocketReturn {
     setTradingMode,
     placeTestOrder,
     setAllowances,
-    activateKillSwitch,
-    deactivateKillSwitch,
   };
 }

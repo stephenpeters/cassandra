@@ -321,6 +321,67 @@ export interface LiveTradingStatus {
   wallet?: WalletBalance;
 }
 
+// Sniper Strategy types
+export type SniperStatusType = "disabled" | "skip" | "waiting" | "position_taken" | "ready" | "no_signal";
+
+export interface SniperEvaluation {
+  side: "UP" | "DOWN";
+  price: number;
+  ev_pct: number;
+  in_range: boolean;
+  ev_ok: boolean;
+}
+
+export interface SniperStatus {
+  status: SniperStatusType;
+  reason: string;
+  symbol: string;
+  market_start?: number;
+  market_end?: number;
+  timestamp?: number;
+  elapsed_sec?: number;
+  min_elapsed_sec?: number;
+  time_remaining?: number;
+  signal?: "UP" | "DOWN";
+  entry_price?: number;
+  ev_pct?: number;
+  evaluations?: SniperEvaluation[];
+}
+
+export interface SniperSignal {
+  symbol: string;
+  signal: "UP" | "DOWN";
+  entry_price: number;
+  elapsed_sec: number;
+  position_size: number;
+  market_start: number;
+  market_end: number;
+  ev_pct?: number;
+}
+
+// Real-time price update from Polymarket WebSocket
+export interface PMPriceUpdate {
+  asset_id: string;
+  symbol: string;        // BTC, ETH, etc
+  outcome: "UP" | "DOWN";
+  price: number;
+  best_bid: number;
+  best_ask: number;
+  timestamp: number;
+  update_type: "price_change" | "last_trade_price" | "book";
+}
+
+// Mode status from backend mode_controller
+export type TradingModeValue = "live" | "paper" | "off";
+
+export interface ModeStatus {
+  mode: TradingModeValue;
+  is_trading_enabled: boolean;
+  is_live: boolean;
+  changed_at: number;
+  changed_by: string;
+}
+
 export interface WebSocketMessage {
   type:
     | "init"
@@ -342,6 +403,10 @@ export interface WebSocketMessage {
     | "live_fill"
     | "live_alert"
     | "live_status"
+    | "sniper_status"
+    | "sniper_signal"
+    | "pm_price_update"
+    | "mode_update"
     | "ping"
     | "pong";
   symbol?: string;

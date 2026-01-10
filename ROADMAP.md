@@ -146,3 +146,91 @@
 - System designed to support them when launched
 - 4-hour and daily data derived from hourly candles (no separate collection)
 - Multi-market UI ready for future timeframes
+
+---
+
+## Strategy Ideas (Backlog)
+
+### Market Maker / Liquidity Rebates Strategy
+
+**Source:** Twitter observation - 44% profit in one day
+
+**Concept:** Exploit Polymarket's "Maker Rebates Program"
+
+**How It Works:**
+1. 15-minute crypto markets charge a fee from takers (up to 1.5%)
+2. The fee fully redistributes from takers to makers
+3. To become a "maker" you place limit orders (provide liquidity)
+
+**Strategy Details:**
+- Place limit orders using a **delta-neutral strategy**
+- Mirror positions on YES and NO (not dependent on market outcome)
+- Example: If placing YES at 50%, also place NO at 49-50%
+- Reuse same liquidity: bet → claim → bet again (every 15 min)
+
+**Reported Results:**
+- $60 initial capital
+- $7 earned on spreads
+- $19 earned on liquidity rewards
+- Total: $86 (44% growth in one day)
+- ~1.5% profit from taker fees every 15 minutes
+
+**Implementation Notes:**
+- Need to calculate optimal spread width
+- Must handle order placement timing
+- Consider slippage and fill rates
+- May compete with other market makers
+- Need to verify actual rebate rates and mechanics
+
+**Risks:**
+- Spread may not fill on both sides
+- Rapid price moves could leave one side unfilled
+- Other market makers may offer tighter spreads
+- Capital locked during waiting for fills
+
+---
+
+### Volatility Farming / Spread Capture Strategy
+
+**Source:** Analysis of @alliswell's Polymarket account ($227K+ profits)
+**Account:** https://polymarket.com/@alliswell
+
+**Concept:** Exploit micro-inefficiencies in real-time order flow
+
+**Key Mechanics:**
+- Algorithmic ladder orders: sell at 77c, buy back at 73-74c within minutes
+- Position sizes scale: $0.37 to $3K depending on spread width and book depth
+- Not about predicting outcomes - pure spread capture
+
+**Stats:**
+- Trades ~40x per hour
+- Most positions under $50
+- Biggest single win: $137K (covers 500+ micro-losses)
+- Hit rate doesn't matter when winners are asymmetric
+
+**Infrastructure Required:**
+- WebSocket feeds monitoring order book changes in milliseconds
+- Automated position sizing that adjusts to volatility
+- Sub-second execution when spreads dislocate
+- 24/7 uptime without breaking
+
+**Implementation Notes:**
+- Need real-time order book depth analysis
+- Calculate optimal spread widths dynamically
+- Scale position size based on liquidity available
+- Handle rapid position cycling (buy-claim-bet again)
+- Asymmetric risk: small losses, large wins
+
+**Risks:**
+- Infrastructure complexity (24/7 reliability)
+- Execution risk in fast-moving markets
+- Capital efficiency during position cycling
+- API rate limits and websocket stability
+
+---
+
+## Cleanup & Refactoring (Backlog)
+
+| Item | Priority | Description |
+|------|----------|-------------|
+| Rename "whale trades" to "copy trades" | Low | Update all references to whale trades terminology across frontend, backend, and docs. Affects ~16 files including: WhaleTradesTable.tsx, whale_following.py, useWebSocket.ts, FollowingModal.tsx, etc. |

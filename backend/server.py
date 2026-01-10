@@ -71,6 +71,11 @@ class TradingModeRequest(BaseModel):
     mode: str = Field(..., pattern="^(paper|live)$")
 
 
+class ModeRequest(BaseModel):
+    """3-way mode control: live, paper, off (off = kill switch)"""
+    mode: str = Field(..., pattern="^(live|paper|off)$")
+
+
 class KillSwitchRequest(BaseModel):
     activate: bool
     reason: str = "Manual"
@@ -122,7 +127,7 @@ from data_feeds import (
     OrderBook,
     WhaleTrade,
 )
-from trading import TradingEngine
+from trading import TradingEngine, SniperConfig, SniperStrategy, DipArbConfig, DipArbStrategy, LatencyArbConfig, LatencyArbStrategy
 from live_trading import (
     LiveTradingEngine,
     LiveTradingConfig,
@@ -132,6 +137,7 @@ from live_trading import (
 from trade_ledger import TradeLedger
 from market_data_store import MarketDataStore, PriceSnapshot, MarketTradeRecord
 from strategy_manager import get_strategy_manager, TraderConfig
+from mode_controller import get_mode_controller, TradingMode as UnifiedTradingMode
 from whale_following import (
     WhaleFollowingStrategy,
     WhaleFollowConfig,
@@ -214,6 +220,9 @@ momentum_calc: MomentumCalculator = None
 polymarket_feed: Polymarket15MinFeed = None
 paper_trading: TradingEngine = None
 live_trading: LiveTradingEngine = None
+sniper_strategy: SniperStrategy = None
+dip_arb_strategy: DipArbStrategy = None
+latency_arb_strategy: LatencyArbStrategy = None
 trade_ledger: TradeLedger = None
 market_data_store: MarketDataStore = None  # Rolling 24-hour data storage (V2)
 whale_detector: WhaleTradeDetector = None
@@ -396,11 +405,91 @@ async def _startup():
     # Trading mode is controlled by live_trading.config.mode
     print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
 
+    # Initialize sniper strategy from strategy_config.json
+    global sniper_strategy
+    strategy_manager = get_strategy_manager()
+    sniper_strat = strategy_manager.get_strategy("sniper")
+    if sniper_strat:
+        sniper_config = SniperConfig(
+            enabled=sniper_strat.enabled,
+            min_price=sniper_strat.settings.get("min_price", 0.75),
+            min_elapsed_sec=sniper_strat.settings.get("min_elapsed_sec", 600),
+            markets=sniper_strat.markets,
+            position_size_pct=sniper_strat.settings.get("position_size_pct", 2.0),
+            max_position_usd=sniper_strat.settings.get("max_position_usd", 100.0),
+        )
+        sniper_strategy = SniperStrategy(config=sniper_config)
+        print(f"[Server] Sniper strategy initialized: enabled={sniper_strat.enabled}, "
+              f"min_price={sniper_config.min_price}, min_elapsed={sniper_config.min_elapsed_sec}s, "
+              f"markets={sniper_config.markets}")
+    else:
+        print("[Server] Sniper strategy not found in config - disabled")
+
+    # Initialize dip_arb strategy from strategy_config.json
+    global dip_arb_strategy
+    dip_arb_strat = strategy_manager.get_strategy("dip_arb")
+    if dip_arb_strat:
+        dip_arb_config = DipArbConfig(
+            enabled=dip_arb_strat.enabled,
+            dip_threshold=dip_arb_strat.settings.get("dip_threshold", 0.15),
+            surge_threshold=dip_arb_strat.settings.get("surge_threshold", 0.15),
+            sliding_window_sec=dip_arb_strat.settings.get("sliding_window_sec", 3),
+            sum_target=dip_arb_strat.settings.get("sum_target", 0.95),
+            window_minutes=dip_arb_strat.settings.get("window_minutes", 2),
+            enable_surge=dip_arb_strat.settings.get("enable_surge", True),
+            markets=dip_arb_strat.markets,
+            position_size_pct=dip_arb_strat.settings.get("position_size_pct", 2.0),
+            max_position_usd=dip_arb_strat.settings.get("max_position_usd", 100.0),
+            min_profit_rate=dip_arb_strat.settings.get("min_profit_rate", 0.05),
+            shares_per_leg=dip_arb_strat.settings.get("shares_per_leg", 10),
+        )
+        dip_arb_strategy = DipArbStrategy(config=dip_arb_config)
+        print(f"[Server] DipArb strategy initialized: enabled={dip_arb_strat.enabled}, "
+              f"dip={dip_arb_config.dip_threshold*100:.0f}%, window={dip_arb_config.window_minutes}min, "
+              f"sum_target={dip_arb_config.sum_target}, markets={dip_arb_config.markets}")
+    else:
+        print("[Server] DipArb strategy not found in config - disabled")
+
+    # Initialize latency_arb strategy from strategy_config.json
+    global latency_arb_strategy
+    latency_arb_strat = strategy_manager.get_strategy("latency_arb")
+    if latency_arb_strat:
+        latency_arb_config = LatencyArbConfig(
+            enabled=latency_arb_strat.enabled,
+            min_move_pct=latency_arb_strat.settings.get("min_move_pct", 0.3),
+            take_profit_pct=latency_arb_strat.settings.get("take_profit_pct", 6.0),
+            max_entry_price=latency_arb_strat.settings.get("max_entry_price", 0.65),
+            min_time_remaining_sec=latency_arb_strat.settings.get("min_time_remaining_sec", 300),
+            hold_if_confirmed=latency_arb_strat.settings.get("hold_if_confirmed", True),
+            confirmed_threshold=latency_arb_strat.settings.get("confirmed_threshold", 0.90),
+            markets=latency_arb_strat.markets,
+            position_size_pct=latency_arb_strat.settings.get("position_size_pct", 2.0),
+            max_position_usd=latency_arb_strat.settings.get("max_position_usd", 100.0),
+            slippage_buffer_pct=latency_arb_strat.settings.get("slippage_buffer_pct", 1.5),
+            cooldown_sec=latency_arb_strat.settings.get("cooldown_sec", 30),
+        )
+        latency_arb_strategy = LatencyArbStrategy(config=latency_arb_config)
+        print(f"[Server] LatencyArb strategy initialized: enabled={latency_arb_strat.enabled}, "
+              f"min_move={latency_arb_config.min_move_pct}%, take_profit={latency_arb_config.take_profit_pct}%, "
+              f"markets={latency_arb_config.markets}")
+    else:
+        print("[Server] LatencyArb strategy not found in config - disabled")
+
     # Initialize whale trade detector
     global whale_detector
 
     def on_whale_bias_detected(bias: WhaleMarketBias):
         """Handle whale bias detection - forward to paper trading"""
+        # Check if copy_trading strategy is enabled
+        strategy_mgr = get_strategy_manager()
+        copy_trading_cfg = strategy_mgr.get_strategy("copy_trading") if strategy_mgr else None
+        if not copy_trading_cfg or not copy_trading_cfg.get("enabled", False):
+            # Still broadcast to frontend for visibility, but don't trade
+            asyncio.create_task(
+                broadcast({"type": "whale_bias", "data": bias.to_dict()})
+            )
+            return
+
         if paper_trading and bias.bias != "NEUTRAL":
             # Get current Polymarket price
             current_price = 0.5  # Default
@@ -475,6 +564,16 @@ async def _startup():
         """Handle bias update from WebSocket whale detector"""
         print(f"[WhaleWS] {bias.whale_name} bias on {bias.symbol}: {bias.bias} "
               f"(confidence: {bias.confidence:.0%}, trades: {bias.num_trades})")
+
+        # Check if copy_trading strategy is enabled
+        strategy_mgr = get_strategy_manager()
+        copy_trading_cfg = strategy_mgr.get_strategy("copy_trading") if strategy_mgr else None
+        if not copy_trading_cfg or not copy_trading_cfg.get("enabled", False):
+            # Still broadcast to frontend for visibility, but don't trade
+            asyncio.create_task(
+                broadcast({"type": "whale_ws_bias", "data": bias.to_dict()})
+            )
+            return
 
         # Forward to paper trading if bias is actionable
         if paper_trading and bias.bias != "NEUTRAL":
@@ -1191,20 +1290,38 @@ async def paper_trading_loop():
                 elapsed = now - market_start
                 open_key = f"{symbol}_{market_start}"
 
+                # Get target price from Polymarket (scraped from their page) or fallback to Binance
+                pm_target_price = market_data.get("target_price", 0.0)
+                reference_price = pm_target_price if pm_target_price > 0 else current_price
+
                 if elapsed <= 10 and open_key not in _recorded_opens:
                     # Track window for chart data (always)
                     _tracked_windows[open_key] = {
                         "symbol": symbol,
                         "start": market_start,
                         "end": market_end,
-                        "open_price": current_price,
+                        "open_price": reference_price,
+                        "target_price": pm_target_price,  # PM target (0 if not available)
                     }
                     _recorded_opens.add(open_key)
-                    print(f"[Chart] {symbol} window open recorded: ${current_price:.2f}", flush=True)
+                    if pm_target_price > 0:
+                        print(f"[Chart] {symbol} target price (from PM): ${pm_target_price:,.2f}", flush=True)
+                    else:
+                        print(f"[Chart] {symbol} using Binance price: ${current_price:.2f} (PM target unavailable)", flush=True)
 
                     # Also record for paper trading if active
                     if paper_trading_active:
-                        paper_trading.record_window_open(symbol, market_start, current_price)
+                        paper_trading.record_window_open(symbol, market_start, reference_price)
+
+                    # Record open price for DipArb strategy
+                    if dip_arb_strategy and dip_arb_strategy.config.enabled:
+                        # UP price is polymarket_up_price, DOWN is complement
+                        pm_up = market_data.get("price", 0.5)
+                        dip_arb_strategy.record_open_price(symbol, market_start, pm_up, 1.0 - pm_up)
+
+                    # Record Binance open price for LatencyArb strategy
+                    if latency_arb_strategy and latency_arb_strategy.config.enabled:
+                        latency_arb_strategy.record_binance_open(symbol, market_start, current_price)
 
                 # Clean up old keys (windows that ended)
                 _recorded_opens = {k for k in _recorded_opens if int(k.split("_")[1]) > now - 1800}
@@ -1212,25 +1329,35 @@ async def paper_trading_loop():
                 # Get current Polymarket UP price
                 polymarket_up_price = market_data.get("price", 0.5)
 
+                # Record price for DipArb sliding window detection
+                if dip_arb_strategy and dip_arb_strategy.config.enabled:
+                    dip_arb_strategy.record_price(symbol, now, polymarket_up_price, 1.0 - polymarket_up_price)
+
                 # Record chart data point at configured interval (always, not just when paper trading)
                 last_update = _last_chart_update.get(symbol, 0)
                 if now - last_update >= CHART_UPDATE_INTERVAL_SEC:
                     # Track window if not already tracked (allows late joining)
                     if open_key not in _tracked_windows:
-                        # Fetch the actual price at market start from Binance history
-                        historical_open = fetch_binance_price_at_sync(symbol, market_start)
-                        actual_open_price = historical_open if historical_open else current_price
+                        # Prioritize PM target price, fallback to Binance historical
+                        if pm_target_price > 0:
+                            actual_open_price = pm_target_price
+                            print(f"[Chart] {symbol} late join: using PM target ${pm_target_price:,.2f} (elapsed: {elapsed}s)", flush=True)
+                        else:
+                            # Fetch the actual price at market start from Binance history
+                            historical_open = fetch_binance_price_at_sync(symbol, market_start)
+                            actual_open_price = historical_open if historical_open else current_price
+                            if historical_open:
+                                print(f"[Chart] {symbol} late join: fetched Binance ${actual_open_price:.2f} (elapsed: {elapsed}s)", flush=True)
+                            else:
+                                print(f"[Chart] {symbol} late join: using current ${current_price:.2f} as fallback (elapsed: {elapsed}s)", flush=True)
 
                         _tracked_windows[open_key] = {
                             "symbol": symbol,
                             "start": market_start,
                             "end": market_end,
                             "open_price": actual_open_price,
+                            "target_price": pm_target_price,
                         }
-                        if historical_open:
-                            print(f"[Chart] {symbol} late join: fetched historical open ${actual_open_price:.2f} (elapsed: {elapsed}s)", flush=True)
-                        else:
-                            print(f"[Chart] {symbol} late join: using current ${current_price:.2f} as fallback (elapsed: {elapsed}s)", flush=True)
 
                         # Also record for paper trading on late join (critical for latency strategy)
                         if paper_trading_active and open_key not in _recorded_opens:
@@ -1238,9 +1365,9 @@ async def paper_trading_loop():
                             _recorded_opens.add(open_key)
                             print(f"[PT] {symbol} late window open recorded: ${actual_open_price:.2f}", flush=True)
 
-                    # Get start price from tracked windows
+                    # Get start price from tracked windows (prefer target_price if available)
                     window_info = _tracked_windows.get(open_key, {})
-                    start_price = window_info.get("open_price", current_price)
+                    start_price = window_info.get("target_price") or window_info.get("open_price", current_price)
                     record_chart_datapoint(
                         symbol=symbol,
                         market_start=market_start,
@@ -1267,15 +1394,21 @@ async def paper_trading_loop():
                     signals = momentum_calc.get_all_signals()
                     momentum = signals.get(f"{symbol}USDT", {})
 
-                # Check for latency arbitrage opportunity
-                signal = paper_trading.process_latency_opportunity(
-                    symbol=symbol,
-                    binance_current=current_price,
-                    polymarket_up_price=polymarket_up_price,
-                    market_start=market_start,
-                    market_end=market_end,
-                    momentum=momentum,
-                )
+                # Check for latency gap opportunity (only if latency_gap strategy is enabled)
+                strategy_mgr = get_strategy_manager()
+                latency_gap_cfg = strategy_mgr.get_strategy("latency_gap") if strategy_mgr else None
+                latency_gap_enabled = latency_gap_cfg.enabled if latency_gap_cfg else False
+
+                signal = None
+                if latency_gap_enabled:
+                    signal = paper_trading.process_latency_opportunity(
+                        symbol=symbol,
+                        binance_current=current_price,
+                        polymarket_up_price=polymarket_up_price,
+                        market_start=market_start,
+                        market_end=market_end,
+                        momentum=momentum,
+                    )
 
                 if signal:
                     print(f"[Latency] {symbol} SIGNAL: {signal.signal.value} | "
@@ -1315,6 +1448,332 @@ async def paper_trading_loop():
                                 print(f"[LIVE] {symbol} ORDER ERROR: {e}", flush=True)
                         else:
                             print(f"[LIVE] {symbol} SKIPPED: No token_id available", flush=True)
+
+                # =========================================================
+                # SNIPER STRATEGY: Buy high-probability side late in window
+                # Only triggers if NO latency signal was generated
+                # =========================================================
+                if not signal and sniper_strategy and sniper_strategy.config.enabled:
+                    # Use real-time WebSocket prices if available, fallback to polling
+                    rt_up, rt_down = None, None
+                    if pm_ws_client:
+                        rt_up, rt_down = pm_ws_client.get_prices(symbol)
+
+                    sniper_up_price = rt_up if rt_up is not None else polymarket_up_price
+                    sniper_down_price = rt_down if rt_down is not None else (1.0 - polymarket_up_price)
+
+                    # Broadcast status EVERY SECOND when in active zone (elapsed >= min_elapsed)
+                    # This enables real-time charting of prices and EV
+                    in_active_zone = elapsed >= sniper_strategy.config.min_elapsed_sec
+                    should_broadcast = in_active_zone or (now % 5 == 0)
+
+                    if should_broadcast:
+                        sniper_status = sniper_strategy.get_status(
+                            symbol=symbol,
+                            up_price=sniper_up_price,
+                            down_price=sniper_down_price,
+                            elapsed_sec=elapsed,
+                            market_start=market_start,
+                        )
+                        sniper_status["market_start"] = market_start
+                        sniper_status["market_end"] = market_end
+                        sniper_status["timestamp"] = now
+                        sniper_status["using_realtime"] = rt_up is not None
+                        await broadcast({
+                            "type": "sniper_status",
+                            "data": sniper_status,
+                        })
+
+                    sniper_result = sniper_strategy.check_signal(
+                        symbol=symbol,
+                        up_price=sniper_up_price,
+                        down_price=sniper_down_price,
+                        elapsed_sec=elapsed,
+                        market_start=market_start,
+                    )
+
+                    if sniper_result:
+                        sniper_signal, ev_info = sniper_result
+
+                        # Calculate position size
+                        account_balance = paper_trading.balance if paper_trading else 10000
+                        position_size = min(
+                            account_balance * (sniper_strategy.config.position_size_pct / 100),
+                            sniper_strategy.config.max_position_usd,
+                        )
+
+                        entry_price = polymarket_up_price if sniper_signal == "UP" else down_price
+
+                        print(f"[Sniper] {symbol} SIGNAL: {sniper_signal} | "
+                              f"Price: {entry_price:.1%} | "
+                              f"EV: {ev_info['ev_pct']:+.1f}% | "
+                              f"Elapsed: {elapsed}s | "
+                              f"Size: ${position_size:.2f}", flush=True)
+
+                        # Open paper position
+                        if paper_trading:
+                            paper_trading.open_position(
+                                symbol=symbol,
+                                side=sniper_signal,
+                                entry_price=entry_price,
+                                size_usd=position_size,
+                                checkpoint="sniper",
+                                market_start=market_start,
+                                market_end=market_end,
+                            )
+
+                        # Record that we took this position to avoid re-entry
+                        sniper_strategy.record_position(symbol, market_start)
+
+                        # Broadcast sniper signal
+                        await broadcast({
+                            "type": "sniper_signal",
+                            "data": {
+                                "symbol": symbol,
+                                "signal": sniper_signal,
+                                "entry_price": entry_price,
+                                "elapsed_sec": elapsed,
+                                "position_size": position_size,
+                                "market_start": market_start,
+                                "market_end": market_end,
+                            },
+                        })
+
+                # =========================================================
+                # DIP ARBITRAGE STRATEGY: Two-leg flash crash arbitrage
+                # Leg1: Buy dipped side early in window
+                # Leg2: Hedge with opposite side when profitable
+                # =========================================================
+                if dip_arb_strategy and dip_arb_strategy.config.enabled:
+                    down_price = 1.0 - polymarket_up_price
+
+                    # Check for Leg2 first (hedge opportunity) - can trigger anytime
+                    leg2_signal = dip_arb_strategy.check_leg2_signal(
+                        symbol=symbol,
+                        up_price=polymarket_up_price,
+                        down_price=down_price,
+                        market_start=market_start,
+                    )
+
+                    if leg2_signal:
+                        # Execute Leg2 hedge
+                        account_balance = paper_trading.balance if paper_trading else 10000
+                        position_size = min(
+                            account_balance * (dip_arb_strategy.config.position_size_pct / 100),
+                            dip_arb_strategy.config.max_position_usd,
+                        )
+
+                        print(f"[DipArb] {symbol} LEG2 HEDGE: {leg2_signal['side']} | "
+                              f"Price: {leg2_signal['current_price']:.1%} | "
+                              f"Leg1: {leg2_signal['leg1_side']} @ {leg2_signal['leg1_price']:.1%} | "
+                              f"Total: {leg2_signal['total_cost']:.1%} | "
+                              f"Profit: {leg2_signal['profit_rate']:.1%}", flush=True)
+
+                        # Open paper position for Leg2
+                        if paper_trading:
+                            paper_trading.open_position(
+                                symbol=symbol,
+                                side=leg2_signal["side"],
+                                entry_price=leg2_signal["current_price"],
+                                size_usd=position_size,
+                                checkpoint="dip_arb_leg2",
+                                market_start=market_start,
+                                market_end=market_end,
+                            )
+
+                        # Record Leg2 completion
+                        dip_arb_strategy.record_leg2(
+                            symbol=symbol,
+                            market_start=market_start,
+                            side=leg2_signal["side"],
+                            price=leg2_signal["current_price"],
+                        )
+
+                        # Broadcast Leg2 signal
+                        await broadcast({
+                            "type": "dip_arb_leg2",
+                            "data": {
+                                "symbol": symbol,
+                                "side": leg2_signal["side"],
+                                "entry_price": leg2_signal["current_price"],
+                                "leg1_side": leg2_signal["leg1_side"],
+                                "leg1_price": leg2_signal["leg1_price"],
+                                "total_cost": leg2_signal["total_cost"],
+                                "profit_rate": leg2_signal["profit_rate"],
+                                "elapsed_sec": elapsed,
+                                "market_start": market_start,
+                                "market_end": market_end,
+                            },
+                        })
+
+                    # Check for Leg1 (only if no Leg2 was triggered and no existing Leg1)
+                    elif not signal:  # Only trigger if no latency signal
+                        leg1_signal = dip_arb_strategy.check_leg1_signal(
+                            symbol=symbol,
+                            up_price=polymarket_up_price,
+                            down_price=down_price,
+                            elapsed_sec=elapsed,
+                            market_start=market_start,
+                            current_time=now,
+                        )
+
+                        if leg1_signal:
+                            # Execute Leg1
+                            account_balance = paper_trading.balance if paper_trading else 10000
+                            position_size = min(
+                                account_balance * (dip_arb_strategy.config.position_size_pct / 100),
+                                dip_arb_strategy.config.max_position_usd,
+                            )
+
+                            print(f"[DipArb] {symbol} LEG1 {leg1_signal['reason'].upper()}: {leg1_signal['side']} | "
+                                  f"Price: {leg1_signal['current_price']:.1%} | "
+                                  f"Drop: {leg1_signal['drop_pct']:.1%} | "
+                                  f"Elapsed: {elapsed}s", flush=True)
+
+                            # Open paper position for Leg1
+                            if paper_trading:
+                                paper_trading.open_position(
+                                    symbol=symbol,
+                                    side=leg1_signal["side"],
+                                    entry_price=leg1_signal["current_price"],
+                                    size_usd=position_size,
+                                    checkpoint="dip_arb_leg1",
+                                    market_start=market_start,
+                                    market_end=market_end,
+                                )
+
+                            # Record Leg1
+                            dip_arb_strategy.record_leg1(
+                                symbol=symbol,
+                                market_start=market_start,
+                                side=leg1_signal["side"],
+                                price=leg1_signal["current_price"],
+                                timestamp=now,
+                            )
+
+                            # Broadcast Leg1 signal
+                            await broadcast({
+                                "type": "dip_arb_leg1",
+                                "data": {
+                                    "symbol": symbol,
+                                    "side": leg1_signal["side"],
+                                    "entry_price": leg1_signal["current_price"],
+                                    "reason": leg1_signal["reason"],
+                                    "drop_pct": leg1_signal["drop_pct"],
+                                    "elapsed_sec": elapsed,
+                                    "market_start": market_start,
+                                    "market_end": market_end,
+                                },
+                            })
+
+                    # Cleanup old DipArb data
+                    dip_arb_strategy.cleanup_old_data(now)
+
+                # =========================================================
+                # LATENCY ARBITRAGE STRATEGY: Exploit Binance→PM lag
+                # Buy when Binance moves, take profit or hold confirmed
+                # =========================================================
+                if latency_arb_strategy and latency_arb_strategy.config.enabled:
+                    down_price = 1.0 - polymarket_up_price
+
+                    # Check for exit signals first (take profit on existing positions)
+                    exit_signal = latency_arb_strategy.check_exit_signal(
+                        symbol=symbol,
+                        up_price=polymarket_up_price,
+                        down_price=down_price,
+                        market_start=market_start,
+                    )
+
+                    if exit_signal and exit_signal["action"] == "take_profit":
+                        # Take profit - close position early
+                        print(f"[LatencyArb] {symbol} TAKE PROFIT: {exit_signal['reason']} | "
+                              f"Return: {exit_signal['return_pct']:.1f}%", flush=True)
+
+                        # Record exit
+                        latency_arb_strategy.record_exit(symbol, market_start)
+
+                        # Broadcast take profit
+                        await broadcast({
+                            "type": "latency_arb_exit",
+                            "data": {
+                                "symbol": symbol,
+                                "action": "take_profit",
+                                "current_price": exit_signal["current_price"],
+                                "return_pct": exit_signal["return_pct"],
+                                "reason": exit_signal["reason"],
+                                "market_start": market_start,
+                            },
+                        })
+
+                    elif exit_signal and exit_signal["action"] == "hold_confirmed":
+                        # Just log - holding confirmed winner to expiry
+                        pass  # Already logging in check_exit_signal
+
+                    # Check for entry signals (only if no position yet)
+                    entry_signal = latency_arb_strategy.check_entry_signal(
+                        symbol=symbol,
+                        binance_price=current_price,
+                        up_price=polymarket_up_price,
+                        down_price=down_price,
+                        elapsed_sec=elapsed,
+                        market_start=market_start,
+                        market_end=market_end,
+                        current_time=now,
+                    )
+
+                    if entry_signal:
+                        # Execute entry
+                        account_balance = paper_trading.balance if paper_trading else 10000
+                        position_size = min(
+                            account_balance * (latency_arb_strategy.config.position_size_pct / 100),
+                            latency_arb_strategy.config.max_position_usd,
+                        )
+
+                        print(f"[LatencyArb] {symbol} ENTRY: {entry_signal['side']} | "
+                              f"Binance move: {entry_signal['binance_move_pct']:.2f}% | "
+                              f"PM price: {entry_signal['entry_price']:.1%} | "
+                              f"Size: ${position_size:.2f}", flush=True)
+
+                        # Open paper position
+                        if paper_trading:
+                            paper_trading.open_position(
+                                symbol=symbol,
+                                side=entry_signal["side"],
+                                entry_price=entry_signal["entry_price"],
+                                size_usd=position_size,
+                                checkpoint="latency_arb",
+                                market_start=market_start,
+                                market_end=market_end,
+                            )
+
+                        # Record entry
+                        latency_arb_strategy.record_entry(
+                            symbol=symbol,
+                            market_start=market_start,
+                            side=entry_signal["side"],
+                            entry_price=entry_signal["entry_price"],
+                            timestamp=now,
+                        )
+
+                        # Broadcast entry signal
+                        await broadcast({
+                            "type": "latency_arb_entry",
+                            "data": {
+                                "symbol": symbol,
+                                "side": entry_signal["side"],
+                                "entry_price": entry_signal["entry_price"],
+                                "binance_move_pct": entry_signal["binance_move_pct"],
+                                "binance_open": entry_signal["binance_open"],
+                                "binance_current": entry_signal["binance_current"],
+                                "position_size": position_size,
+                                "elapsed_sec": elapsed,
+                                "market_start": market_start,
+                                "market_end": market_end,
+                            },
+                        })
+
+                    # Cleanup old LatencyArb data
+                    latency_arb_strategy.cleanup_old_data(now)
 
             # =====================================================================
             # RESOLVE ALL MARKET WINDOWS (for historical tracking)
@@ -2467,6 +2926,123 @@ async def get_effective_mode():
     }
 
 
+# =============================================================================
+# UNIFIED MODE CONTROL (3-way: LIVE / PAPER / OFF)
+# =============================================================================
+
+@app.get("/api/mode")
+async def get_mode():
+    """
+    Get current trading mode (3-way: live/paper/off).
+
+    OFF = kill switch active, no trading allowed.
+    """
+    mode_controller = get_mode_controller()
+    return mode_controller.get_status()
+
+
+@app.post("/api/mode")
+async def set_mode(
+    request: ModeRequest,
+    _: str = Depends(verify_api_key)
+):
+    """
+    Set trading mode (3-way: live/paper/off). Requires API key.
+
+    - live: Real trades on Polymarket (CAUTION!)
+    - paper: Simulated trades, no real money
+    - off: Kill switch - stops all trading instantly
+
+    The OFF mode can also be triggered by Telegram /kill command.
+    """
+    mode_controller = get_mode_controller()
+    new_mode = UnifiedTradingMode(request.mode)
+
+    # Safety checks for live mode
+    if new_mode == UnifiedTradingMode.LIVE:
+        if not CLOB_AVAILABLE:
+            return JSONResponse(
+                {"error": "py-clob-client not installed - cannot enable live mode"},
+                status_code=400
+            )
+        if not os.getenv("POLYMARKET_PRIVATE_KEY"):
+            return JSONResponse(
+                {"error": "POLYMARKET_PRIVATE_KEY not set - cannot enable live mode"},
+                status_code=400
+            )
+
+        # Initialize CLOB client if live_trading exists
+        if live_trading:
+            clob_ok, clob_msg = live_trading.ensure_clob_initialized()
+            if not clob_ok:
+                return JSONResponse(
+                    {"error": f"Failed to initialize CLOB: {clob_msg}"},
+                    status_code=400
+                )
+
+    # Set the mode
+    changed = await mode_controller.set_mode(new_mode, changed_by="api")
+
+    # Sync to live_trading for backward compatibility
+    if live_trading:
+        if new_mode == UnifiedTradingMode.OFF:
+            await live_trading.activate_kill_switch("Mode set to OFF via API")
+        else:
+            live_trading.set_mode(request.mode)
+            if live_trading.kill_switch_active:
+                await live_trading.deactivate_kill_switch()
+
+    # Sync to paper_trading for alerts
+    if paper_trading:
+        if new_mode != UnifiedTradingMode.OFF:
+            paper_trading.trading_mode = request.mode
+
+    # Broadcast updated status
+    await broadcast({
+        "type": "mode_update",
+        "data": mode_controller.get_status(),
+    })
+
+    return {
+        "status": "ok",
+        "mode": request.mode,
+        "changed": changed,
+        **mode_controller.get_status(),
+    }
+
+
+@app.post("/api/mode/kill")
+async def kill_trading(
+    reason: str = "manual",
+    _: str = Depends(verify_api_key)
+):
+    """
+    Emergency stop - set mode to OFF.
+
+    This is equivalent to setting mode to "off" but provides a clear
+    semantic action for emergency stops.
+    """
+    mode_controller = get_mode_controller()
+    await mode_controller.kill(reason)
+
+    # Sync to live_trading
+    if live_trading:
+        await live_trading.activate_kill_switch(f"Kill via API: {reason}")
+
+    # Broadcast
+    await broadcast({
+        "type": "mode_update",
+        "data": mode_controller.get_status(),
+    })
+
+    return {
+        "status": "ok",
+        "mode": "off",
+        "reason": reason,
+        **mode_controller.get_status(),
+    }
+
+
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(request: Request):
     """
@@ -3128,6 +3704,19 @@ async def enable_strategy(
         return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
 
     strategy_manager.enable_strategy(name, enabled)
+
+    # Update live strategy objects
+    global sniper_strategy, dip_arb_strategy, latency_arb_strategy
+    if name == "sniper" and sniper_strategy:
+        sniper_strategy.config.enabled = enabled
+        print(f"[Server] Sniper strategy {'enabled' if enabled else 'disabled'}")
+    elif name == "dip_arb" and dip_arb_strategy:
+        dip_arb_strategy.config.enabled = enabled
+        print(f"[Server] DipArb strategy {'enabled' if enabled else 'disabled'}")
+    elif name == "latency_arb" and latency_arb_strategy:
+        latency_arb_strategy.config.enabled = enabled
+        print(f"[Server] LatencyArb strategy {'enabled' if enabled else 'disabled'}")
+
     return {
         "status": "ok",
         "strategy": name,
@@ -3147,10 +3736,24 @@ async def set_strategy_markets(
         return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
 
     strategy_manager.set_strategy_markets(name, markets)
+    updated_markets = strategy_manager.strategies[name].markets
+
+    # Update live strategy objects
+    global sniper_strategy, dip_arb_strategy, latency_arb_strategy
+    if name == "sniper" and sniper_strategy:
+        sniper_strategy.config.markets = updated_markets
+        print(f"[Server] Sniper markets updated: {updated_markets}")
+    elif name == "dip_arb" and dip_arb_strategy:
+        dip_arb_strategy.config.markets = updated_markets
+        print(f"[Server] DipArb markets updated: {updated_markets}")
+    elif name == "latency_arb" and latency_arb_strategy:
+        latency_arb_strategy.config.markets = updated_markets
+        print(f"[Server] LatencyArb markets updated: {updated_markets}")
+
     return {
         "status": "ok",
         "strategy": name,
-        "markets": strategy_manager.strategies[name].markets,
+        "markets": updated_markets,
     }
 
 
@@ -3166,6 +3769,56 @@ async def update_strategy_settings(
         return JSONResponse({"error": f"Strategy '{name}' not found"}, status_code=404)
 
     strategy_manager.update_strategy_settings(name, settings)
+
+    # Reload live strategy objects when settings change
+    strat = strategy_manager.strategies[name]
+    global sniper_strategy, dip_arb_strategy, latency_arb_strategy
+
+    if name == "sniper" and sniper_strategy:
+        sniper_strategy.config = SniperConfig(
+            enabled=strat.enabled,
+            min_price=strat.settings.get("min_price", 0.98),
+            min_elapsed_sec=strat.settings.get("min_elapsed_sec", 600),
+            markets=strat.markets,
+            position_size_pct=strat.settings.get("position_size_pct", 2.0),
+            max_position_usd=strat.settings.get("max_position_usd", 100.0),
+        )
+        print(f"[Server] Sniper config reloaded: {sniper_strategy.config}")
+
+    elif name == "dip_arb" and dip_arb_strategy:
+        dip_arb_strategy.config = DipArbConfig(
+            enabled=strat.enabled,
+            dip_threshold=strat.settings.get("dip_threshold", 0.15),
+            surge_threshold=strat.settings.get("surge_threshold", 0.15),
+            sliding_window_sec=strat.settings.get("sliding_window_sec", 3),
+            sum_target=strat.settings.get("sum_target", 0.95),
+            window_minutes=strat.settings.get("window_minutes", 2),
+            enable_surge=strat.settings.get("enable_surge", True),
+            markets=strat.markets,
+            position_size_pct=strat.settings.get("position_size_pct", 2.0),
+            max_position_usd=strat.settings.get("max_position_usd", 100.0),
+            min_profit_rate=strat.settings.get("min_profit_rate", 0.05),
+            shares_per_leg=strat.settings.get("shares_per_leg", 10),
+        )
+        print(f"[Server] DipArb config reloaded: {dip_arb_strategy.config}")
+
+    elif name == "latency_arb" and latency_arb_strategy:
+        latency_arb_strategy.config = LatencyArbConfig(
+            enabled=strat.enabled,
+            min_move_pct=strat.settings.get("min_move_pct", 0.3),
+            take_profit_pct=strat.settings.get("take_profit_pct", 6.0),
+            max_entry_price=strat.settings.get("max_entry_price", 0.65),
+            min_time_remaining_sec=strat.settings.get("min_time_remaining_sec", 300),
+            hold_if_confirmed=strat.settings.get("hold_if_confirmed", True),
+            confirmed_threshold=strat.settings.get("confirmed_threshold", 0.90),
+            markets=strat.markets,
+            position_size_pct=strat.settings.get("position_size_pct", 2.0),
+            max_position_usd=strat.settings.get("max_position_usd", 100.0),
+            slippage_buffer_pct=strat.settings.get("slippage_buffer_pct", 1.5),
+            cooldown_sec=strat.settings.get("cooldown_sec", 30),
+        )
+        print(f"[Server] LatencyArb config reloaded: {latency_arb_strategy.config}")
+
     return {
         "status": "ok",
         "strategy": name,
@@ -3232,6 +3885,62 @@ async def remove_trader(
     return {
         "status": "ok",
         "removed": trader_name,
+    }
+
+
+# ============================================================================
+# DIP ARBITRAGE STRATEGY STATUS
+# ============================================================================
+
+@app.get("/api/strategies/dip_arb/status")
+async def get_dip_arb_status():
+    """Get current DipArb strategy status including pending Leg1 positions"""
+    if not dip_arb_strategy:
+        return JSONResponse({"error": "DipArb strategy not initialized"}, status_code=404)
+
+    pending_leg1 = dip_arb_strategy.get_pending_leg1_positions()
+
+    return {
+        "enabled": dip_arb_strategy.config.enabled,
+        "config": dip_arb_strategy.config.to_dict(),
+        "pending_leg1": [
+            {
+                "position_key": key,
+                "side": pos["side"],
+                "entry_price": pos["price"],
+                "timestamp": pos["timestamp"],
+            }
+            for key, pos in pending_leg1.items()
+        ],
+        "completed_rounds": len(dip_arb_strategy._completed_rounds),
+    }
+
+
+# ============================================================================
+# LATENCY ARBITRAGE STRATEGY STATUS
+# ============================================================================
+
+@app.get("/api/strategies/latency_arb/status")
+async def get_latency_arb_status():
+    """Get current LatencyArb strategy status including open positions"""
+    if not latency_arb_strategy:
+        return JSONResponse({"error": "LatencyArb strategy not initialized"}, status_code=404)
+
+    open_positions = latency_arb_strategy.get_open_positions()
+
+    return {
+        "enabled": latency_arb_strategy.config.enabled,
+        "config": latency_arb_strategy.config.to_dict(),
+        "open_positions": [
+            {
+                "position_key": key,
+                "side": pos["side"],
+                "entry_price": pos["entry_price"],
+                "entry_time": pos["entry_time"],
+            }
+            for key, pos in open_positions.items()
+        ],
+        "total_closed": len(latency_arb_strategy._closed),
     }
 
 

@@ -4,6 +4,7 @@ import { memo, useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { ModeSwitch } from "@/components/ui/mode-switch";
 import {
   TrendingUp,
   TrendingDown,
@@ -15,11 +16,9 @@ import {
   Clock,
   ShieldAlert,
   Wallet,
-  Power,
-  PowerOff,
 } from "lucide-react";
 import { SimpleTooltip } from "@/components/ui/tooltip";
-import type { TradingAccount, TradingSignal, TradingConfig, LiveTradingStatus, Markets15MinData } from "@/types";
+import type { TradingAccount, TradingSignal, TradingConfig, LiveTradingStatus, Markets15MinData, TradingModeValue } from "@/types";
 
 interface TradingCardProps {
   account: TradingAccount | null;
@@ -27,13 +26,13 @@ interface TradingCardProps {
   config: TradingConfig | null;
   liveStatus: LiveTradingStatus | null;
   markets15m: Markets15MinData | null;
+  currentMode: TradingModeValue;  // Current 3-way mode: off/paper/live
   onToggle: () => void;
   onReset: () => void;
   onFactoryReset: () => void;
   onConfigUpdate: (config: Partial<TradingConfig>) => void;
-  onModeChange: (mode: "paper" | "live", apiKey: string) => Promise<{ success: boolean; error?: string }>;
+  onModeChange: (mode: TradingModeValue, apiKey: string) => Promise<{ success: boolean; error?: string }>;
   onSetAllowances?: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
-  onKillSwitch?: (activate: boolean, reason?: string) => Promise<{ success: boolean; error?: string }>;
   onManualOrder?: (order: { symbol: string; side: "UP" | "DOWN"; amount: number }) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -100,26 +99,23 @@ function TradingCardComponent({
   config,
   liveStatus,
   markets15m,
+  currentMode,
   onToggle,
   onReset,
   onFactoryReset,
   onConfigUpdate,
   onModeChange,
   onSetAllowances,
-  onKillSwitch,
   onManualOrder,
 }: TradingCardProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showModeModal, setShowModeModal] = useState(false);
+  const [pendingMode, setPendingMode] = useState<TradingModeValue | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [modeError, setModeError] = useState<string | null>(null);
   const [isChangingMode, setIsChangingMode] = useState(false);
   const [uptime, setUptime] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
-
-  // Kill switch state
-  const [killSwitchLoading, setKillSwitchLoading] = useState(false);
-  const [killSwitchError, setKillSwitchError] = useState<string | null>(null);
 
   // Allowances state
   const [allowancesLoading, setAllowancesLoading] = useState(false);
@@ -138,21 +134,40 @@ function TradingCardComponent({
     if (savedKey) setApiKey(savedKey);
   }, []);
 
-  const tradingMode = liveStatus?.mode || "paper";
-  const isLiveMode = tradingMode === "live";
+  // Derive mode state from currentMode prop
+  const isLiveMode = currentMode === "live";
+  const isOffMode = currentMode === "off";
+  const isPaperMode = currentMode === "paper";
 
-  const handleModeToggle = () => {
-    if (isLiveMode) {
-      // Switching to paper mode - show confirmation
-      setShowModeModal(true);
-    } else {
-      // Switching to live mode - show confirmation with warnings
-      setShowModeModal(true);
+  // Handle 3-way mode switch change
+  const handleModeSwitch = (newMode: TradingModeValue) => {
+    if (newMode === currentMode) return;
+
+    // OFF mode doesn't require confirmation
+    if (newMode === "off") {
+      setPendingMode(newMode);
+      confirmModeChange(newMode);
+      return;
     }
+
+    // LIVE mode requires confirmation with warnings
+    if (newMode === "live") {
+      setPendingMode(newMode);
+      setShowModeModal(true);
+      return;
+    }
+
+    // PAPER mode - just switch (still requires API key)
+    setPendingMode(newMode);
+    setShowModeModal(true);
   };
 
-  const confirmModeChange = async () => {
-    if (!apiKey) {
+  const confirmModeChange = async (mode?: TradingModeValue) => {
+    const targetMode = mode || pendingMode;
+    if (!targetMode) return;
+
+    // OFF mode doesn't require API key
+    if (targetMode !== "off" && !apiKey) {
       setModeError("API key is required");
       return;
     }
@@ -160,13 +175,15 @@ function TradingCardComponent({
     setIsChangingMode(true);
     setModeError(null);
 
-    const newMode = isLiveMode ? "paper" : "live";
-    const result = await onModeChange(newMode, apiKey);
+    const result = await onModeChange(targetMode, apiKey);
 
     if (result.success) {
       // Save API key to localStorage on success
-      localStorage.setItem("predmkt_api_key", apiKey);
+      if (apiKey) {
+        localStorage.setItem("predmkt_api_key", apiKey);
+      }
       setShowModeModal(false);
+      setPendingMode(null);
     } else {
       setModeError(result.error || "Failed to change mode");
     }
@@ -218,28 +235,20 @@ function TradingCardComponent({
     }
   };
 
-  // Handle kill switch toggle
-  const handleKillSwitch = async (activate: boolean) => {
-    if (!onKillSwitch) return;
+  // Track uptime since session start - reset when account is reset
+  const prevTotalTradesRef = useRef(account?.total_trades ?? 0);
 
-    setKillSwitchLoading(true);
-    setKillSwitchError(null);
-
-    try {
-      const result = await onKillSwitch(activate, activate ? "Emergency halt from UI" : undefined);
-      if (!result.success) {
-        setKillSwitchError(result.error || "Failed to toggle kill switch");
-        setTimeout(() => setKillSwitchError(null), 5000);
-      }
-    } catch {
-      setKillSwitchError("Unexpected error");
-      setTimeout(() => setKillSwitchError(null), 5000);
-    } finally {
-      setKillSwitchLoading(false);
+  useEffect(() => {
+    // Detect account reset: total_trades drops to 0 AND balance equals starting_balance
+    if (account && prevTotalTradesRef.current > 0 && account.total_trades === 0 &&
+        account.balance === account.starting_balance) {
+      // Account was reset, reset uptime
+      startTimeRef.current = Date.now();
+      setUptime(0);
     }
-  };
+    prevTotalTradesRef.current = account?.total_trades ?? 0;
+  }, [account?.total_trades, account?.balance, account?.starting_balance]);
 
-  // Track uptime since component mount (proxy for session start)
   useEffect(() => {
     const interval = setInterval(() => {
       setUptime(Math.floor((Date.now() - startTimeRef.current) / 1000));
@@ -263,108 +272,65 @@ function TradingCardComponent({
 
   return (
     <>
-    <Card className={`bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800 ${isLiveMode ? "ring-2 ring-red-500" : ""}`}>
-      {/* Mode Banner */}
-      <div className={`px-4 py-2 text-center font-bold text-sm ${
-        isLiveMode
-          ? "bg-red-600 text-white"
-          : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
-      }`}>
-        {isLiveMode ? (
-          <span className="flex items-center justify-center gap-2">
-            <ShieldAlert className="h-4 w-4" />
-            LIVE TRADING - REAL MONEY
-            {liveStatus?.wallet && (
-              <span className="ml-2 font-mono">
-                (${liveStatus.wallet.usdc_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})
-              </span>
-            )}
-          </span>
-        ) : (
-          <span className="flex items-center justify-center gap-2">
-            📝 PAPER TRADING - SIMULATED
-          </span>
-        )}
-      </div>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-lg text-zinc-800 dark:text-zinc-200">
-                Trading
-              </CardTitle>
-              {account.trading_halted && (
-                <Badge className="bg-red-500/20 text-red-500">
-                  <AlertTriangle className="h-3 w-3 mr-1" />
-                  Halted
-                </Badge>
+    <Card className={`bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800 ${isLiveMode ? "ring-2 ring-red-500" : isOffMode ? "ring-2 ring-zinc-500" : ""}`}>
+      <CardHeader className="py-3">
+        <div className="flex items-center justify-between flex-nowrap gap-4">
+          {/* Left: Mode title and uptime */}
+          <div className="flex items-center gap-3 flex-nowrap">
+            <CardTitle className={`text-base font-bold whitespace-nowrap ${
+              isLiveMode
+                ? "text-red-600 dark:text-red-500"
+                : isOffMode
+                ? "text-zinc-500"
+                : "text-blue-600 dark:text-blue-500"
+            }`}>
+              {isLiveMode ? (
+                <span className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4" />
+                  LIVE TRADING
+                </span>
+              ) : isOffMode ? (
+                "OFFLINE"
+              ) : (
+                "PAPER TRADING"
               )}
-              {liveStatus?.kill_switch_active && (
-                <Badge className="bg-orange-500/20 text-orange-500">
-                  <AlertTriangle className="h-3 w-3 mr-1" />
-                  Kill Switch
-                </Badge>
-              )}
-            </div>
-            {/* Uptime display */}
-            <div className="flex items-center gap-1 text-xs text-zinc-500">
+            </CardTitle>
+            <div className="flex items-center gap-1 text-xs text-zinc-500 whitespace-nowrap">
               <Clock className="h-3 w-3" />
               <span className="font-mono">{formatUptime(uptime)}</span>
-              <span className="text-zinc-400">running</span>
             </div>
+            {account.trading_halted && (
+              <Badge className="bg-red-500/20 text-red-500 text-[10px]">Halted</Badge>
+            )}
+            {isLiveMode && liveStatus?.wallet && (
+              <span className="text-xs font-mono text-red-600 dark:text-red-400">
+                ${liveStatus.wallet.usdc_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            {/* Kill Switch Button - Emergency halt */}
-            {onKillSwitch && (
-              <SimpleTooltip
-                content={liveStatus?.kill_switch_active
-                  ? "Resume trading"
-                  : "Emergency halt all trading"
-                }
-              >
-                <button
-                  onClick={() => handleKillSwitch(!liveStatus?.kill_switch_active)}
-                  disabled={killSwitchLoading}
-                  className={`p-1.5 rounded transition-colors ${
-                    liveStatus?.kill_switch_active
-                      ? "bg-orange-500 text-white hover:bg-orange-600"
-                      : "bg-zinc-100 dark:bg-zinc-800 hover:bg-red-100 dark:hover:bg-red-900/30 text-zinc-600 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
-                  } disabled:opacity-50`}
-                >
-                  {killSwitchLoading ? (
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                  ) : liveStatus?.kill_switch_active ? (
-                    <Power className="h-4 w-4" />
-                  ) : (
-                    <PowerOff className="h-4 w-4" />
-                  )}
-                </button>
-              </SimpleTooltip>
-            )}
-            {killSwitchError && (
-              <span className="text-xs text-red-500">{killSwitchError}</span>
-            )}
-            {/* Mode Toggle Button */}
-            <SimpleTooltip content={isLiveMode ? "Switch to Paper Mode" : "Switch to Live Mode"}>
-              <button
-                onClick={handleModeToggle}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  isLiveMode
-                    ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50"
-                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                }`}
-              >
-                {isLiveMode ? "Go Paper" : "Go Live"}
-              </button>
+
+          {/* Right: 3-way mode switch and settings */}
+          <div className="flex items-center gap-3 flex-nowrap">
+            {/* 3-Way Mode Switch: OFF - PAPER - LIVE */}
+            <SimpleTooltip content="OFF = Kill switch, PAPER = Simulated, LIVE = Real money">
+              <div>
+                <ModeSwitch
+                  mode={currentMode}
+                  onChange={handleModeSwitch}
+                  disabled={isChangingMode}
+                />
+              </div>
             </SimpleTooltip>
-            <SimpleTooltip content="Trading Settings">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="p-1.5 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-              >
-                <Settings className="h-4 w-4 text-zinc-600 dark:text-zinc-400" />
-              </button>
-            </SimpleTooltip>
+
+            {/* Settings Button */}
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="px-3 py-1.5 text-xs font-medium rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors border border-zinc-300 dark:border-zinc-700"
+            >
+              Settings
+            </button>
+
+            {/* Active/Paused toggle */}
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-500">
                 {isEnabled ? "Active" : "Paused"}
@@ -372,6 +338,7 @@ function TradingCardComponent({
               <Switch
                 checked={isEnabled}
                 onCheckedChange={onToggle}
+                disabled={isOffMode}
               />
             </div>
           </div>
@@ -838,18 +805,22 @@ function TradingCardComponent({
     </Card>
 
     {/* Mode Change Confirmation Modal */}
-    {showModeModal && (
+    {showModeModal && pendingMode && (
       <div className="fixed inset-0 z-50 flex items-center justify-center">
         <div
           className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-          onClick={() => setShowModeModal(false)}
+          onClick={() => { setShowModeModal(false); setPendingMode(null); }}
         />
         <div className="relative bg-white dark:bg-zinc-900 rounded-lg shadow-xl border border-zinc-300 dark:border-zinc-700 w-full max-w-md mx-4 p-6">
           <h3 className="text-lg font-semibold mb-4">
-            {isLiveMode ? "Switch to Paper Mode?" : "⚠️ Switch to LIVE Mode?"}
+            {pendingMode === "live"
+              ? "⚠️ Switch to LIVE Mode?"
+              : pendingMode === "paper"
+              ? "Switch to Paper Mode?"
+              : "Stop Trading?"}
           </h3>
 
-          {!isLiveMode && (
+          {pendingMode === "live" && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
               <div className="flex items-start gap-2 text-red-600 dark:text-red-400">
                 <ShieldAlert className="h-5 w-5 mt-0.5 flex-shrink-0" />
@@ -863,6 +834,12 @@ function TradingCardComponent({
                 </div>
               </div>
             </div>
+          )}
+
+          {pendingMode === "paper" && (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+              Paper mode uses simulated trades. No real money will be used.
+            </p>
           )}
 
           <div className="mb-4">
@@ -887,25 +864,25 @@ function TradingCardComponent({
 
           <div className="flex justify-end gap-3">
             <button
-              onClick={() => setShowModeModal(false)}
+              onClick={() => { setShowModeModal(false); setPendingMode(null); }}
               className="px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-colors"
             >
               Cancel
             </button>
             <button
-              onClick={confirmModeChange}
+              onClick={() => confirmModeChange()}
               disabled={isChangingMode || !apiKey}
               className={`px-4 py-2 text-sm rounded transition-colors ${
-                isLiveMode
-                  ? "bg-zinc-600 hover:bg-zinc-700 text-white"
-                  : "bg-red-600 hover:bg-red-700 text-white"
+                pendingMode === "live"
+                  ? "bg-red-600 hover:bg-red-700 text-white"
+                  : "bg-blue-600 hover:bg-blue-700 text-white"
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               {isChangingMode
                 ? "Switching..."
-                : isLiveMode
-                ? "Switch to Paper"
-                : "Enable LIVE Trading"}
+                : pendingMode === "live"
+                ? "Enable LIVE Trading"
+                : "Switch to Paper"}
             </button>
           </div>
         </div>

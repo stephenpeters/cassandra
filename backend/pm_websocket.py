@@ -156,10 +156,10 @@ class PMWebSocketClient:
             if isinstance(data, int):
                 return
 
-            # Debug: Disabled to reduce memory allocation from string formatting
-            # if self._message_count < 5:
+            # Debug logging disabled - uncomment to diagnose issues
+            # if self._message_count < 10:
             #     self._message_count += 1
-            #     print(f"[PM-WS] Sample message #{self._message_count}: {str(data)[:200]}", flush=True)
+            #     print(f"[PM-WS] Sample message #{self._message_count}: {str(data)[:300]}", flush=True)
 
             # Messages might be arrays (batch updates)
             if isinstance(data, list):
@@ -296,13 +296,14 @@ class PMWebSocketClient:
         if not self.ws:
             return
 
+        # Polymarket WS requires uppercase "MARKET" and operation field for dynamic subs
         msg = {
             "assets_ids": asset_ids,
-            "type": "market",
+            "type": "MARKET",
         }
 
         await self.ws.send(json.dumps(msg))
-        print(f"[PM-WS] Subscribed to {len(asset_ids)} assets", flush=True)
+        print(f"[PM-WS] Subscribed to {len(asset_ids)} assets: {[aid[:20]+'...' for aid in asset_ids]}", flush=True)
 
     async def subscribe(self, asset_id: str, symbol: str, outcome: str):
         """Subscribe to price updates for an asset"""

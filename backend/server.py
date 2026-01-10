@@ -616,7 +616,7 @@ async def _startup():
         # Broadcast to frontend for instant chart updates
         asyncio.create_task(
             broadcast({
-                "type": "pm_price",
+                "type": "pm_price_update",
                 "data": update.to_dict()
             })
         )

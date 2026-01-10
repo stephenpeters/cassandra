@@ -402,8 +402,11 @@ async def _startup():
         broadcast({"type": "live_alert", "data": {"title": title, "message": msg}})
     )
 
-    # Trading mode is controlled by live_trading.config.mode
-    print(f"[Server] Live trading initialized in {live_trading.config.mode.value} mode")
+    # Initialize unified mode controller - ALWAYS start at OFF for safety
+    # User must explicitly enable paper or live trading via UI/API
+    mode_ctrl = get_mode_controller()
+    # mode_controller defaults to OFF, don't override it
+    print(f"[Server] Mode controller initialized: {mode_ctrl.mode.value} (safe default)")
 
     # Initialize sniper strategy from strategy_config.json
     global sniper_strategy
@@ -413,10 +416,12 @@ async def _startup():
         sniper_config = SniperConfig(
             enabled=sniper_strat.enabled,
             min_price=sniper_strat.settings.get("min_price", 0.75),
+            max_price=sniper_strat.settings.get("max_price", 0.98),
             min_elapsed_sec=sniper_strat.settings.get("min_elapsed_sec", 600),
             markets=sniper_strat.markets,
             position_size_pct=sniper_strat.settings.get("position_size_pct", 2.0),
             max_position_usd=sniper_strat.settings.get("max_position_usd", 100.0),
+            fee_rate=sniper_strat.settings.get("fee_rate", 0.02),
         )
         sniper_strategy = SniperStrategy(config=sniper_config)
         print(f"[Server] Sniper strategy initialized: enabled={sniper_strat.enabled}, "
@@ -611,18 +616,9 @@ async def _startup():
     # Initialize Polymarket WebSocket for real-time prices
     global pm_ws_client
 
-    def on_pm_price_update(update: PMPriceUpdate):
-        """Handle real-time price update from Polymarket WebSocket"""
-        # Broadcast to frontend for instant price updates
-        asyncio.create_task(
-            broadcast({
-                "type": "pm_price_update",
-                "data": update.to_dict()
-            })
-        )
-
+    # PM WebSocket prices are cached internally - strategies access via pm_ws_client.get_prices()
+    # Frontend gets prices via price_tick (every 500ms) instead of RT pm_price_update
     pm_ws_client = get_pm_ws_client()
-    pm_ws_client.on_price_update = on_pm_price_update
     print("[Server] Polymarket WebSocket client initialized for real-time prices")
 
     if not CLOB_AVAILABLE:
@@ -639,6 +635,7 @@ async def _startup():
     background_tasks.append(asyncio.create_task(polymarket_feed.start(poll_interval=2.0)))
     background_tasks.append(asyncio.create_task(broadcast_momentum_loop()))
     background_tasks.append(asyncio.create_task(broadcast_markets_loop()))
+    background_tasks.append(asyncio.create_task(broadcast_fast_prices_loop()))
     background_tasks.append(asyncio.create_task(paper_trading_loop()))
     background_tasks.append(asyncio.create_task(start_sync_loop()))
     background_tasks.append(asyncio.create_task(whale_detector.start()))
@@ -671,6 +668,9 @@ async def _startup():
 
     # Start market data snapshot collection loop (V2)
     background_tasks.append(asyncio.create_task(snapshot_collection_loop()))
+
+    # Start daily archive loop for losing trade analysis
+    background_tasks.append(asyncio.create_task(daily_archive_loop()))
 
     print("[Server] Started all data feeds")
 
@@ -733,8 +733,11 @@ async def _shutdown():
 # BROADCAST HELPERS
 # ============================================================================
 
+_broadcast_count = 0
+
 async def broadcast(message: dict):
     """Broadcast message to all connected WebSocket clients"""
+    global _broadcast_count
     if not ws_clients:
         return
 
@@ -743,6 +746,14 @@ async def broadcast(message: dict):
 
     # Create a copy to avoid "Set changed size during iteration" error
     clients_snapshot = list(ws_clients)
+
+    # Debug: log markets_15m broadcasts periodically
+    _broadcast_count += 1
+    msg_type = message.get("type")
+    if msg_type == "markets_15m" and len(clients_snapshot) > 0:
+        # Log every 15th broadcast (every 30 seconds)
+        if _markets_loop_counter % 15 == 0:
+            print(f"[Broadcast] markets_15m #{_markets_loop_counter} to {len(clients_snapshot)} clients", flush=True)
 
     for ws in clients_snapshot:
         try:
@@ -857,18 +868,107 @@ async def snapshot_collection_loop():
 
 _markets_loop_counter = 0
 
+async def broadcast_fast_prices_loop():
+    """
+    Fast price updates for responsive UI.
+    Refresh rate controlled by PRICE_REFRESH_MS env var (default 500ms).
+    Sends lightweight price-only data (Binance + PM prices) + latest chart point.
+    Strategies still have access to RT feeds directly via pm_ws_client.get_prices().
+    """
+    refresh_sec = PRICE_REFRESH_MS / 1000.0
+    print(f"[FastPrices] Started with {PRICE_REFRESH_MS}ms refresh rate", flush=True)
+    while True:
+        await asyncio.sleep(refresh_sec)
+
+        if not binance_feed or not ws_clients:
+            continue
+
+        try:
+            # Build lightweight price update
+            prices = {}
+            chart_points = {}  # Latest chart point per symbol
+            active_markets = polymarket_feed.get_active_markets() if polymarket_feed else {}
+            now = int(time.time())
+
+            for symbol in ["BTC", "ETH", "SOL", "XRP"]:
+                # Get Binance price
+                binance_price = binance_feed.get_current_price(f"{symbol}USDT")
+
+                # Get PM prices (RT from WebSocket if available, fallback to Gamma API)
+                pm_up = 0.5
+                pm_down = 0.5
+                if pm_ws_client:
+                    rt_up, rt_down = pm_ws_client.get_prices(symbol)
+                    if rt_up is not None:
+                        pm_up = rt_up
+                        pm_down = rt_down if rt_down is not None else (1.0 - rt_up)
+                    elif symbol in active_markets:
+                        pm_up = active_markets[symbol].get("price", 0.5)
+                        pm_down = 1.0 - pm_up
+                elif symbol in active_markets:
+                    pm_up = active_markets[symbol].get("price", 0.5)
+                    pm_down = 1.0 - pm_up
+
+                prices[symbol] = {
+                    "binance": round(binance_price, 2) if binance_price else None,
+                    "up": round(pm_up, 4),
+                    "down": round(pm_down, 4),
+                }
+
+                # Build latest chart point for this symbol
+                if binance_price:
+                    chart_points[symbol] = {
+                        "time": now,
+                        "binancePrice": round(binance_price, 2),
+                        "upPrice": round(pm_up, 4),
+                        "downPrice": round(pm_down, 4),
+                    }
+
+            await broadcast({
+                "type": "price_tick",
+                "data": prices,
+                "chart_points": chart_points,
+            })
+
+        except Exception as e:
+            print(f"[FastPrices] Error: {e}", flush=True)
+
+
 async def broadcast_markets_loop():
-    """Periodically broadcast active 15-min markets and timing"""
+    """Periodically broadcast active 15-min markets and timing (every 2s)"""
     global _markets_loop_counter
+    print("[MarketsLoop] Started", flush=True)
     while True:
         await asyncio.sleep(2)  # Every 2 seconds
         _markets_loop_counter += 1
 
+        # Debug first 3 iterations
+        if _markets_loop_counter <= 3:
+            print(f"[MarketsLoop] #{_markets_loop_counter} feed={bool(polymarket_feed)} clients={len(ws_clients) if ws_clients else 0}", flush=True)
+
         if polymarket_feed and ws_clients:
             # Only include chart_data every other cycle (4s) to reduce memory
             include_chart = (_markets_loop_counter % 2 == 0)
+            active_markets = polymarket_feed.get_active_markets()
+
+            # Always add down_price for frontend display
+            # Use RT prices when available, otherwise compute from UP price
+            for symbol, market in active_markets.items():
+                up_price = market.get("price", 0.5)
+                rt_down = None
+
+                if pm_ws_client:
+                    rt_up, rt_down = pm_ws_client.get_prices(symbol)
+                    if rt_up is not None:
+                        up_price = rt_up
+                        market["price"] = up_price
+
+                # Use RT DOWN if available, otherwise compute from UP
+                down_price = rt_down if rt_down is not None else (1.0 - up_price)
+                market["down_price"] = down_price
+
             data = {
-                "active": polymarket_feed.get_active_markets(),
+                "active": active_markets,
                 "timing": polymarket_feed.get_next_market_time(),
                 "trades": polymarket_feed.get_recent_trades(limit=20),
             }
@@ -935,6 +1035,7 @@ async def pm_ws_market_feed_loop():
     This subscribes to real-time price updates for active 15-min markets,
     giving us instant price changes instead of 2-second polling.
     """
+    print("[PM-WS Feed] Starting subscription loop...", flush=True)
     last_window = 0
     subscribed_markets: set[str] = set()
 
@@ -942,6 +1043,7 @@ async def pm_ws_market_feed_loop():
         await asyncio.sleep(5)  # Check every 5 seconds
 
         if not polymarket_feed or not pm_ws_client:
+            print("[PM-WS Feed] Waiting for feeds to initialize...", flush=True)
             continue
 
         try:
@@ -949,6 +1051,7 @@ async def pm_ws_market_feed_loop():
             active_markets = polymarket_feed.get_active_markets()
 
             if not active_markets:
+                print("[PM-WS Feed] No active markets yet", flush=True)
                 continue
 
             # Check if we're in a new window
@@ -963,13 +1066,18 @@ async def pm_ws_market_feed_loop():
             new_markets = current_symbols - subscribed_markets
 
             if new_markets or current_window != last_window:
+                # Build batch of all markets to subscribe
+                markets_batch: dict[str, tuple[str, str]] = {}
                 for symbol in current_symbols:
                     market = active_markets.get(symbol, {})
                     up_token = market.get("up_token_id", market.get("token_id", ""))
                     down_token = market.get("down_token_id", "")
-
                     if up_token or down_token:
-                        await pm_ws_client.subscribe_market(symbol, up_token, down_token)
+                        markets_batch[symbol] = (up_token, down_token)
+
+                # Subscribe to all markets in a single batch message
+                # (Polymarket WS may replace previous subscriptions with each new message)
+                await pm_ws_client.subscribe_markets_batch(markets_batch)
 
                 subscribed_markets = current_symbols
                 last_window = current_window
@@ -985,6 +1093,14 @@ _recorded_opens: set[str] = set()  # "SYMBOL_market_start"
 # Track market windows for resolution (even without positions)
 _tracked_windows: dict[str, dict] = {}  # "SYMBOL_market_start" -> { symbol, start, end, open_price }
 _resolved_windows: set[str] = set()  # Windows we've already resolved
+
+# ============================================================================
+# GLOBAL PRICE REFRESH CONFIGURATION
+# ============================================================================
+# Controls how often all RT price displays update (UP, DOWN, Binance, chart)
+# Set to 0 for true real-time (every price change), or a value in ms for throttled updates
+# Default: 500ms - good balance of responsiveness and performance
+PRICE_REFRESH_MS = int(os.getenv("PRICE_REFRESH_MS", "500"))
 
 # ============================================================================
 # MARKET WINDOW CHART DATA TRACKING
@@ -1217,6 +1333,48 @@ def get_historical_markets(symbol: str = None, limit: int = 10) -> list[dict]:
     return markets[:limit]
 
 
+async def daily_archive_loop():
+    """
+    Daily archive loop - runs at midnight to archive losing trades and purge old data.
+
+    This ensures ALL losing trades are preserved for analysis, while keeping
+    the database lightweight by removing data older than 24 hours.
+    """
+    from datetime import timedelta
+
+    print("[Archive] Daily archive loop started")
+
+    while True:
+        try:
+            # Calculate time until next midnight
+            now = datetime.now()
+            tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            wait_seconds = (tomorrow - now).total_seconds()
+
+            print(f"[Archive] Next archive in {wait_seconds:.0f}s (at midnight)")
+            await asyncio.sleep(wait_seconds)
+
+            # Archive losing trades
+            if trade_ledger:
+                date_str = now.strftime('%Y%m%d')
+                archive_path = f"archives/losing_trades_{date_str}.jsonl"
+
+                count = trade_ledger.archive_losing_trades_to_json(archive_path)
+                print(f"[Archive] Saved {count} losing trades to {archive_path}")
+
+                # Purge old data from DB (keep last 24h)
+                purged = trade_ledger.purge_old_trades(older_than_hours=24)
+                print(f"[Archive] Purged {purged} trades older than 24h")
+
+        except asyncio.CancelledError:
+            print("[Archive] Archive loop cancelled")
+            break
+        except Exception as e:
+            print(f"[Archive] Error: {e}")
+            # Wait 1 hour before retrying on error
+            await asyncio.sleep(3600)
+
+
 async def paper_trading_loop():
     """
     Latency arbitrage paper trading loop.
@@ -1265,9 +1423,15 @@ async def paper_trading_loop():
                 print(f"[PTLoop] Processing {len(active_markets)} markets: {list(active_markets.keys())}", flush=True)
 
             # Determine if paper trading is active for signal generation
-            # Paper trading ONLY runs when live_trading mode is "paper" (not "live")
-            live_mode_is_paper = not live_trading or live_trading.config.mode.value == "paper"
-            paper_trading_active = paper_trading and paper_trading.config.enabled and live_mode_is_paper
+            # Use unified mode_controller as single source of truth (not live_trading.config.mode)
+            mode_ctrl = get_mode_controller()
+            trading_mode = mode_ctrl.mode
+            # Paper trading runs when mode is PAPER (not OFF or LIVE)
+            paper_trading_active = (
+                paper_trading
+                and paper_trading.config.enabled
+                and trading_mode == UnifiedTradingMode.PAPER
+            )
 
             for symbol, market_data in active_markets.items():
                 market_start = market_data.get("start_time", 0)
@@ -1277,6 +1441,10 @@ async def paper_trading_loop():
                 if not market_start or not market_end or not is_active:
                     print(f"[Debug] {symbol} skipped: start={market_start}, end={market_end}, active={is_active}", flush=True)
                     continue
+
+                # Check if symbol is enabled for trading (gate all strategy execution)
+                enabled_assets = paper_trading.config.enabled_assets if paper_trading else ["BTC"]
+                symbol_enabled = symbol.upper() in [a.upper() for a in enabled_assets]
 
                 # Get current Binance price
                 binance_sym = f"{symbol}usdt".lower()
@@ -1290,28 +1458,27 @@ async def paper_trading_loop():
                 elapsed = now - market_start
                 open_key = f"{symbol}_{market_start}"
 
-                # Get target price from Polymarket (scraped from their page) or fallback to Binance
+                # Get target price from Polymarket (scraped from their page) - NO FALLBACKS
                 pm_target_price = market_data.get("target_price", 0.0)
-                reference_price = pm_target_price if pm_target_price > 0 else current_price
 
                 if elapsed <= 10 and open_key not in _recorded_opens:
-                    # Track window for chart data (always)
-                    _tracked_windows[open_key] = {
-                        "symbol": symbol,
-                        "start": market_start,
-                        "end": market_end,
-                        "open_price": reference_price,
-                        "target_price": pm_target_price,  # PM target (0 if not available)
-                    }
-                    _recorded_opens.add(open_key)
-                    if pm_target_price > 0:
-                        print(f"[Chart] {symbol} target price (from PM): ${pm_target_price:,.2f}", flush=True)
+                    # Only track window if we have a valid PM target price - NO FALLBACKS
+                    if pm_target_price <= 0:
+                        print(f"[ERROR] {symbol} PM target price unavailable - SKIPPING window tracking (feed issue)", flush=True)
                     else:
-                        print(f"[Chart] {symbol} using Binance price: ${current_price:.2f} (PM target unavailable)", flush=True)
+                        _tracked_windows[open_key] = {
+                            "symbol": symbol,
+                            "start": market_start,
+                            "end": market_end,
+                            "open_price": pm_target_price,
+                            "target_price": pm_target_price,
+                        }
+                        _recorded_opens.add(open_key)
+                        print(f"[Chart] {symbol} target price (from PM): ${pm_target_price:,.2f}", flush=True)
 
-                    # Also record for paper trading if active
-                    if paper_trading_active:
-                        paper_trading.record_window_open(symbol, market_start, reference_price)
+                        # Also record for paper trading if active
+                        if paper_trading_active:
+                            paper_trading.record_window_open(symbol, market_start, pm_target_price)
 
                     # Record open price for DipArb strategy
                     if dip_arb_strategy and dip_arb_strategy.config.enabled:
@@ -1338,36 +1505,34 @@ async def paper_trading_loop():
                 if now - last_update >= CHART_UPDATE_INTERVAL_SEC:
                     # Track window if not already tracked (allows late joining)
                     if open_key not in _tracked_windows:
-                        # Prioritize PM target price, fallback to Binance historical
-                        if pm_target_price > 0:
-                            actual_open_price = pm_target_price
-                            print(f"[Chart] {symbol} late join: using PM target ${pm_target_price:,.2f} (elapsed: {elapsed}s)", flush=True)
-                        else:
-                            # Fetch the actual price at market start from Binance history
-                            historical_open = fetch_binance_price_at_sync(symbol, market_start)
-                            actual_open_price = historical_open if historical_open else current_price
-                            if historical_open:
-                                print(f"[Chart] {symbol} late join: fetched Binance ${actual_open_price:.2f} (elapsed: {elapsed}s)", flush=True)
-                            else:
-                                print(f"[Chart] {symbol} late join: using current ${current_price:.2f} as fallback (elapsed: {elapsed}s)", flush=True)
+                        # REQUIRE PM target price - NO FALLBACKS to Binance
+                        if pm_target_price <= 0:
+                            print(f"[ERROR] {symbol} late join FAILED: PM target price unavailable (feed issue)", flush=True)
+                            continue  # Skip this symbol entirely - don't record chart data without PM target
 
+                        print(f"[Chart] {symbol} late join: using PM target ${pm_target_price:,.2f} (elapsed: {elapsed}s)", flush=True)
                         _tracked_windows[open_key] = {
                             "symbol": symbol,
                             "start": market_start,
                             "end": market_end,
-                            "open_price": actual_open_price,
+                            "open_price": pm_target_price,
                             "target_price": pm_target_price,
                         }
 
-                        # Also record for paper trading on late join (critical for latency strategy)
+                        # Also record for paper trading on late join
                         if paper_trading_active and open_key not in _recorded_opens:
-                            paper_trading.record_window_open(symbol, market_start, actual_open_price)
+                            paper_trading.record_window_open(symbol, market_start, pm_target_price)
                             _recorded_opens.add(open_key)
-                            print(f"[PT] {symbol} late window open recorded: ${actual_open_price:.2f}", flush=True)
+                            print(f"[PT] {symbol} late window open recorded: ${pm_target_price:.2f}", flush=True)
 
-                    # Get start price from tracked windows (prefer target_price if available)
+                    # Get start price from tracked window - must have valid target price
                     window_info = _tracked_windows.get(open_key, {})
-                    start_price = window_info.get("target_price") or window_info.get("open_price", current_price)
+                    start_price = window_info.get("target_price", 0)
+
+                    if start_price <= 0:
+                        print(f"[ERROR] {symbol} chart data SKIPPED: no valid target price in tracked window", flush=True)
+                        continue
+
                     record_chart_datapoint(
                         symbol=symbol,
                         market_start=market_start,
@@ -1453,7 +1618,7 @@ async def paper_trading_loop():
                 # SNIPER STRATEGY: Buy high-probability side late in window
                 # Only triggers if NO latency signal was generated
                 # =========================================================
-                if not signal and sniper_strategy and sniper_strategy.config.enabled:
+                if not signal and symbol_enabled and sniper_strategy and sniper_strategy.config.enabled:
                     # Use real-time WebSocket prices if available, fallback to polling
                     rt_up, rt_down = None, None
                     if pm_ws_client:
@@ -1496,13 +1661,13 @@ async def paper_trading_loop():
                         sniper_signal, ev_info = sniper_result
 
                         # Calculate position size
-                        account_balance = paper_trading.balance if paper_trading else 10000
+                        account_balance = paper_trading.account.balance if paper_trading else 10000
                         position_size = min(
                             account_balance * (sniper_strategy.config.position_size_pct / 100),
                             sniper_strategy.config.max_position_usd,
                         )
 
-                        entry_price = polymarket_up_price if sniper_signal == "UP" else down_price
+                        entry_price = sniper_up_price if sniper_signal == "UP" else sniper_down_price
 
                         print(f"[Sniper] {symbol} SIGNAL: {sniper_signal} | "
                               f"Price: {entry_price:.1%} | "
@@ -1512,14 +1677,14 @@ async def paper_trading_loop():
 
                         # Open paper position
                         if paper_trading:
-                            paper_trading.open_position(
+                            paper_trading._open_position(
                                 symbol=symbol,
                                 side=sniper_signal,
-                                entry_price=entry_price,
-                                size_usd=position_size,
-                                checkpoint="sniper",
+                                price=entry_price,
                                 market_start=market_start,
                                 market_end=market_end,
+                                checkpoint="sniper",
+                                confidence=0.8,  # Sniper strategy confidence
                             )
 
                         # Record that we took this position to avoid re-entry
@@ -1544,7 +1709,7 @@ async def paper_trading_loop():
                 # Leg1: Buy dipped side early in window
                 # Leg2: Hedge with opposite side when profitable
                 # =========================================================
-                if dip_arb_strategy and dip_arb_strategy.config.enabled:
+                if symbol_enabled and dip_arb_strategy and dip_arb_strategy.config.enabled:
                     down_price = 1.0 - polymarket_up_price
 
                     # Check for Leg2 first (hedge opportunity) - can trigger anytime
@@ -1557,7 +1722,7 @@ async def paper_trading_loop():
 
                     if leg2_signal:
                         # Execute Leg2 hedge
-                        account_balance = paper_trading.balance if paper_trading else 10000
+                        account_balance = paper_trading.account.balance if paper_trading else 10000
                         position_size = min(
                             account_balance * (dip_arb_strategy.config.position_size_pct / 100),
                             dip_arb_strategy.config.max_position_usd,
@@ -1571,14 +1736,14 @@ async def paper_trading_loop():
 
                         # Open paper position for Leg2
                         if paper_trading:
-                            paper_trading.open_position(
+                            paper_trading._open_position(
                                 symbol=symbol,
                                 side=leg2_signal["side"],
-                                entry_price=leg2_signal["current_price"],
-                                size_usd=position_size,
-                                checkpoint="dip_arb_leg2",
+                                price=leg2_signal["current_price"],
                                 market_start=market_start,
                                 market_end=market_end,
+                                checkpoint="dip_arb_leg2",
+                                confidence=0.7,  # Dip arb confidence
                             )
 
                         # Record Leg2 completion
@@ -1619,7 +1784,7 @@ async def paper_trading_loop():
 
                         if leg1_signal:
                             # Execute Leg1
-                            account_balance = paper_trading.balance if paper_trading else 10000
+                            account_balance = paper_trading.account.balance if paper_trading else 10000
                             position_size = min(
                                 account_balance * (dip_arb_strategy.config.position_size_pct / 100),
                                 dip_arb_strategy.config.max_position_usd,
@@ -1632,14 +1797,14 @@ async def paper_trading_loop():
 
                             # Open paper position for Leg1
                             if paper_trading:
-                                paper_trading.open_position(
+                                paper_trading._open_position(
                                     symbol=symbol,
                                     side=leg1_signal["side"],
-                                    entry_price=leg1_signal["current_price"],
-                                    size_usd=position_size,
-                                    checkpoint="dip_arb_leg1",
+                                    price=leg1_signal["current_price"],
                                     market_start=market_start,
                                     market_end=market_end,
+                                    checkpoint="dip_arb_leg1",
+                                    confidence=0.7,  # Dip arb confidence
                                 )
 
                             # Record Leg1
@@ -1673,7 +1838,7 @@ async def paper_trading_loop():
                 # LATENCY ARBITRAGE STRATEGY: Exploit Binance→PM lag
                 # Buy when Binance moves, take profit or hold confirmed
                 # =========================================================
-                if latency_arb_strategy and latency_arb_strategy.config.enabled:
+                if symbol_enabled and latency_arb_strategy and latency_arb_strategy.config.enabled:
                     down_price = 1.0 - polymarket_up_price
 
                     # Check for exit signals first (take profit on existing positions)
@@ -1723,7 +1888,7 @@ async def paper_trading_loop():
 
                     if entry_signal:
                         # Execute entry
-                        account_balance = paper_trading.balance if paper_trading else 10000
+                        account_balance = paper_trading.account.balance if paper_trading else 10000
                         position_size = min(
                             account_balance * (latency_arb_strategy.config.position_size_pct / 100),
                             latency_arb_strategy.config.max_position_usd,
@@ -1736,14 +1901,14 @@ async def paper_trading_loop():
 
                         # Open paper position
                         if paper_trading:
-                            paper_trading.open_position(
+                            paper_trading._open_position(
                                 symbol=symbol,
                                 side=entry_signal["side"],
-                                entry_price=entry_signal["entry_price"],
-                                size_usd=position_size,
-                                checkpoint="latency_arb",
+                                price=entry_signal["entry_price"],
                                 market_start=market_start,
                                 market_end=market_end,
+                                checkpoint="latency_arb",
+                                confidence=0.75,  # Latency arb confidence
                             )
 
                         # Record entry
@@ -1844,12 +2009,16 @@ async def paper_trading_loop():
                               f"Open: ${open_price:.2f} -> Close: ${close_price:.2f} | "
                               f"Position: {position.side} | Result: {'WIN' if is_win else 'LOSS'}", flush=True)
 
+                        # Get target price from tracked windows if available
+                        target_price = _tracked_windows.get(open_key, {}).get("target_price", 0.0)
+
                         paper_trading.resolve_market(
                             symbol=position.symbol,
                             market_start=position.market_start,
                             market_end=position.market_end,
                             binance_open=open_price,
                             binance_close=close_price,
+                            target_price=target_price,
                         )
 
                         # Store resolved market for historical analysis
@@ -2327,8 +2496,29 @@ async def get_markets_15m():
     if not polymarket_feed:
         return {"active": {}, "timing": {}, "trades": [], "chart_data": {}}
 
+    active_markets = polymarket_feed.get_active_markets()
+
+    # Add RT prices, down_price, and binance_price for each market
+    for symbol, market in active_markets.items():
+        up_price = market.get("price", 0.5)
+        rt_down = None
+
+        if pm_ws_client:
+            rt_up, rt_down = pm_ws_client.get_prices(symbol)
+            if rt_up is not None:
+                up_price = rt_up
+                market["price"] = up_price
+
+        # Compute down_price from UP if no RT DOWN
+        market["down_price"] = rt_down if rt_down is not None else (1.0 - up_price)
+
+        # Add Binance price
+        if binance_feed:
+            binance_price = binance_feed.get_current_price(f"{symbol}USDT")
+            market["binance_price"] = round(binance_price, 2) if binance_price else None
+
     return {
-        "active": polymarket_feed.get_active_markets(),
+        "active": active_markets,
         "timing": polymarket_feed.get_next_market_time(),
         "trades": polymarket_feed.get_recent_trades(limit=50),
         "chart_data": get_chart_data_for_markets(),
@@ -2487,6 +2677,49 @@ async def update_markets_config(config: MarketConfigUpdate):
             "enabled_symbols": paper_trading.config.enabled_assets,
             "enabled_timeframes": ["15m"],
         }
+    }
+
+
+# ============================================================================
+# PRICE REFRESH RATE CONFIGURATION
+# ============================================================================
+
+class PriceRefreshConfig(BaseModel):
+    refresh_ms: int = Field(..., ge=0, le=5000, description="Price refresh rate in ms (0=realtime, max 5000)")
+
+
+@app.get("/api/price-refresh")
+async def get_price_refresh():
+    """
+    Get current price refresh rate configuration.
+
+    Returns:
+    - refresh_ms: Current refresh rate in milliseconds (0=realtime)
+    """
+    return {
+        "refresh_ms": PRICE_REFRESH_MS,
+        "description": "0=realtime, 500=default, higher=slower updates",
+    }
+
+
+@app.post("/api/price-refresh", dependencies=[Depends(verify_api_key)])
+async def set_price_refresh(config: PriceRefreshConfig):
+    """
+    Set price refresh rate for all RT price displays.
+
+    Set to 0 for true real-time updates (every price change).
+    Set to 500 (default) for 500ms throttled updates.
+    Higher values reduce CPU/bandwidth but make display less responsive.
+
+    Note: Requires server restart to take effect.
+    """
+    global PRICE_REFRESH_MS
+    PRICE_REFRESH_MS = config.refresh_ms
+
+    return {
+        "success": True,
+        "refresh_ms": PRICE_REFRESH_MS,
+        "note": "Restart server for changes to take effect",
     }
 
 
@@ -3965,7 +4198,8 @@ async def websocket_endpoint(ws: WebSocket):
     print(f"[WS] Client connected. Total: {len(ws_clients)}")
 
     try:
-        # Send initial data
+        # Send initial data including current trading mode
+        mode_ctrl = get_mode_controller()
         await ws.send_json({
             "type": "init",
             "whales": [
@@ -3976,6 +4210,7 @@ async def websocket_endpoint(ws: WebSocket):
             "symbols": list(CryptoExchangeAPI.SYMBOLS.keys()),
             "paper_trading": paper_trading.get_account_summary() if paper_trading else None,
             "live_trading": live_trading.get_status() if live_trading else None,
+            "mode": mode_ctrl.get_status(),  # Sync mode on connect
         })
 
         # Keep connection alive

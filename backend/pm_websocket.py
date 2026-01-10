@@ -149,23 +149,28 @@ class PMWebSocketClient:
         if message == "PONG":
             return
 
+        # Handle raw string numbers (heartbeats)
+        if message.isdigit() or (message.startswith('-') and message[1:].isdigit()):
+            return
+
         try:
             data = json.loads(message)
 
-            # Ignore integer messages (heartbeats/sequence numbers)
-            if isinstance(data, int):
+            # Ignore integer/float messages (heartbeats/sequence numbers)
+            if isinstance(data, (int, float)):
                 return
 
-            # Debug logging disabled - uncomment to diagnose issues
-            # if self._message_count < 10:
-            #     self._message_count += 1
-            #     print(f"[PM-WS] Sample message #{self._message_count}: {str(data)[:300]}", flush=True)
+            # Debug first 5 useful messages to diagnose issues
+            if self._message_count < 5 and isinstance(data, dict) and data.get("event_type"):
+                self._message_count += 1
+                print(f"[PM-WS] Sample #{self._message_count}: {str(data)[:200]}", flush=True)
 
             # Messages might be arrays (batch updates)
             if isinstance(data, list):
                 for item in data:
                     if isinstance(item, dict):
                         await self._process_single_message(item)
+                    # Skip non-dict items (integers, etc.)
                 return
 
             # Single message
@@ -177,7 +182,9 @@ class PMWebSocketClient:
             if message not in ("PING", "PONG") and len(message) > 2:
                 print(f"[PM-WS] Non-JSON message: {message[:50]}", flush=True)
         except Exception as e:
-            print(f"[PM-WS] Error handling message: {e}", flush=True)
+            import traceback
+            print(f"[PM-WS] Error handling message: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
 
     async def _process_single_message(self, data: dict):
         """Process a single message object"""
@@ -205,25 +212,48 @@ class PMWebSocketClient:
         asset_id = data.get("asset_id", "")
 
         if asset_id not in self.subscribed_assets:
+            # Debug: log first few misses
+            if self._message_count < 10:
+                print(f"[PM-WS] Asset not subscribed: {asset_id[:20]}... (have {len(self.subscribed_assets)} assets)", flush=True)
             return
 
         info = self.subscribed_assets[asset_id]
+
+        # Extract best bid/ask - these are the actual market prices
+        best_bid = float(data.get("best_bid", 0))
+        best_ask = float(data.get("best_ask", 0))
+
+        # Calculate midpoint as the fair price (matches Polymarket UI)
+        # Note: data.get("price") is the order price level, NOT the market price
+        if best_bid > 0 and best_ask > 0:
+            midpoint = (best_bid + best_ask) / 2
+        elif best_bid > 0:
+            midpoint = best_bid
+        elif best_ask > 0:
+            midpoint = best_ask
+        else:
+            # Fallback to order price if no bid/ask
+            midpoint = float(data.get("price", 0))
+
+        # Debug: log first matched price update
+        if self._message_count < 8:
+            print(f"[PM-WS] Price update: {info.get('symbol')} {info.get('outcome')} bid={best_bid:.4f} ask={best_ask:.4f} mid={midpoint:.4f}", flush=True)
 
         update = PMPriceUpdate(
             asset_id=asset_id,
             symbol=info.get("symbol", ""),
             outcome=info.get("outcome", ""),
-            price=float(data.get("price", 0)),
-            best_bid=float(data.get("best_bid", 0)),
-            best_ask=float(data.get("best_ask", 0)),
+            price=midpoint,  # Use midpoint as the displayed price
+            best_bid=best_bid,
+            best_ask=best_ask,
             timestamp=data.get("timestamp", int(time.time() * 1000)),
             update_type="price_change",
         )
 
-        # Cache the price for synchronous access
+        # Cache the midpoint price for synchronous access
         cache_key = f"{update.symbol}_{update.outcome}"
         self._price_cache[cache_key] = {
-            "price": update.price,
+            "price": midpoint,
             "timestamp": time.time(),
         }
 
@@ -270,12 +300,30 @@ class PMWebSocketClient:
         info = self.subscribed_assets[asset_id]
 
         # Extract best bid/ask from orderbook
+        # Handle both formats: [{"price": x, "size": y}] and [[price, size]]
         bids = data.get("bids", [])
         asks = data.get("asks", [])
 
-        best_bid = float(bids[0][0]) if bids else 0
-        best_ask = float(asks[0][0]) if asks else 0
+        def get_price(orders: list) -> float:
+            if not orders:
+                return 0
+            first = orders[0]
+            if isinstance(first, dict):
+                return float(first.get("price", 0))
+            elif isinstance(first, (list, tuple)) and len(first) > 0:
+                return float(first[0])
+            return 0
+
+        best_bid = get_price(bids)
+        best_ask = get_price(asks)
         mid_price = (best_bid + best_ask) / 2 if best_bid and best_ask else 0
+
+        # Calculate spread - wide spreads indicate thin/unreliable orderbooks
+        spread = best_ask - best_bid if best_bid and best_ask else 1.0
+
+        # Debug: log first book snapshots
+        if self._message_count < 8:
+            print(f"[PM-WS] Book snapshot: {info.get('symbol')} {info.get('outcome')} bid={best_bid:.4f} ask={best_ask:.4f} mid={mid_price:.4f} spread={spread:.4f}", flush=True)
 
         update = PMPriceUpdate(
             asset_id=asset_id,
@@ -288,6 +336,16 @@ class PMWebSocketClient:
             update_type="book",
         )
 
+        # Only cache book snapshot prices if the spread is reasonable (<50 cents)
+        # Wide spreads (like 0.01/0.99) indicate thin orderbooks and shouldn't
+        # overwrite more accurate price_change updates
+        cache_key = f"{update.symbol}_{update.outcome}"
+        if spread < 0.50:
+            self._price_cache[cache_key] = {
+                "price": mid_price,
+                "timestamp": time.time(),
+            }
+
         if self.on_price_update:
             self.on_price_update(update)
 
@@ -296,10 +354,10 @@ class PMWebSocketClient:
         if not self.ws:
             return
 
-        # Polymarket WS requires uppercase "MARKET" and operation field for dynamic subs
+        # Polymarket WS subscription format
         msg = {
             "assets_ids": asset_ids,
-            "type": "MARKET",
+            "type": "market",
         }
 
         await self.ws.send(json.dumps(msg))
@@ -325,6 +383,30 @@ class PMWebSocketClient:
         asset_ids = [aid for aid in [up_token_id, down_token_id] if aid]
         if self.ws and asset_ids:
             await self._send_subscribe(asset_ids)
+
+    async def subscribe_markets_batch(self, markets: dict[str, tuple[str, str]]):
+        """
+        Subscribe to multiple markets in a single batch message.
+        markets: dict of symbol -> (up_token_id, down_token_id)
+
+        This is needed because Polymarket WS may replace previous subscriptions
+        when a new subscription message is sent.
+        """
+        # Clear old subscriptions first
+        self.subscribed_assets.clear()
+
+        all_asset_ids = []
+        for symbol, (up_token_id, down_token_id) in markets.items():
+            if up_token_id:
+                self.subscribed_assets[up_token_id] = {"symbol": symbol, "outcome": "UP"}
+                all_asset_ids.append(up_token_id)
+            if down_token_id:
+                self.subscribed_assets[down_token_id] = {"symbol": symbol, "outcome": "DOWN"}
+                all_asset_ids.append(down_token_id)
+
+        if self.ws and all_asset_ids:
+            print(f"[PM-WS] Batch subscribing to {len(all_asset_ids)} assets for {len(markets)} markets", flush=True)
+            await self._send_subscribe(all_asset_ids)
 
     async def unsubscribe(self, asset_id: str):
         """Unsubscribe from an asset"""

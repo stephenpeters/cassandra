@@ -194,23 +194,31 @@ class SniperStrategy:
             print(f"[Sniper] {symbol}: SKIP - already have position for this window", flush=True)
             return None
 
-        # Check if either side meets the price range and EV threshold
-        for side, price in [("UP", up_price), ("DOWN", down_price)]:
-            if price >= self.config.min_price and price <= self.config.max_price:
-                # Calculate EV for this entry
-                ev_info = self.calculate_ev(price, self.config.assumed_win_rate)
-                if ev_info["ev_pct"] >= self.config.min_ev_pct:
-                    print(f"[Sniper] {symbol}: SIGNAL {side} @ {price:.1%} | EV={ev_info['ev_pct']:+.1f}%", flush=True)
-                    return (side, ev_info)
-                else:
-                    print(f"[Sniper] {symbol}: {side} @ {price:.1%} - EV too low ({ev_info['ev_pct']:+.1f}% < {self.config.min_ev_pct}%)", flush=True)
-            elif price < self.config.min_price:
-                print(f"[Sniper] {symbol}: {side} @ {price:.1%} - below min_price ({self.config.min_price:.1%})", flush=True)
-            elif price > self.config.max_price:
-                print(f"[Sniper] {symbol}: {side} @ {price:.1%} - above max_price ({self.config.max_price:.1%})", flush=True)
+        # Determine which side has higher probability
+        if up_price >= down_price:
+            side, price = "UP", up_price
+        else:
+            side, price = "DOWN", down_price
 
-        print(f"[Sniper] {symbol}: NO SIGNAL - no side meets criteria", flush=True)
-        return None
+        # CRITICAL: Check price thresholds (75c-98c)
+        if price < self.config.min_price:
+            print(f"[Sniper] {symbol}: SKIP - {side} @ {price:.1%} below min_price {self.config.min_price:.0%}", flush=True)
+            return None
+
+        if price > self.config.max_price:
+            print(f"[Sniper] {symbol}: SKIP - {side} @ {price:.1%} above max_price {self.config.max_price:.0%}", flush=True)
+            return None
+
+        # Calculate EV for reporting
+        ev_info = self.calculate_ev(price, self.config.assumed_win_rate)
+
+        # Check minimum EV threshold
+        if ev_info['ev_pct'] < self.config.min_ev_pct:
+            print(f"[Sniper] {symbol}: SKIP - EV {ev_info['ev_pct']:+.1f}% below min {self.config.min_ev_pct}%", flush=True)
+            return None
+
+        print(f"[Sniper] {symbol}: SIGNAL {side} @ {price:.1%} | EV={ev_info['ev_pct']:+.1f}%", flush=True)
+        return (side, ev_info)
 
     def get_status(
         self,
@@ -247,47 +255,21 @@ class SniperStrategy:
         if position_key in self._positions_taken:
             return {"status": "position_taken", "reason": "Already have position", "symbol": symbol}
 
-        # Evaluate both sides
-        evaluations = []
-        for side, price in [("UP", up_price), ("DOWN", down_price)]:
-            ev_info = self.calculate_ev(price, self.config.assumed_win_rate)
-            eval_data = {
-                "side": side,
-                "price": price,
-                "ev_pct": ev_info["ev_pct"],
-                "in_range": self.config.min_price <= price <= self.config.max_price,
-                "ev_ok": ev_info["ev_pct"] >= self.config.min_ev_pct,
-            }
-            evaluations.append(eval_data)
-
-            # Check if this would trigger
-            if eval_data["in_range"] and eval_data["ev_ok"]:
-                return {
-                    "status": "ready",
-                    "reason": f"Would signal {side}",
-                    "symbol": symbol,
-                    "signal": side,
-                    "entry_price": price,
-                    "ev_pct": ev_info["ev_pct"],
-                    "elapsed_sec": elapsed_sec,
-                }
-
-        # No signal - explain why
-        best_eval = max(evaluations, key=lambda e: e["ev_pct"])
-        if not best_eval["in_range"]:
-            if best_eval["price"] < self.config.min_price:
-                reason = f"Best price {best_eval['price']:.1%} < min {self.config.min_price:.1%}"
-            else:
-                reason = f"Best price {best_eval['price']:.1%} > max {self.config.max_price:.1%}"
+        # Simple logic: always signal the higher-probability side
+        if up_price >= down_price:
+            side, price = "UP", up_price
         else:
-            reason = f"EV {best_eval['ev_pct']:+.1f}% < min {self.config.min_ev_pct}%"
+            side, price = "DOWN", down_price
 
+        ev_info = self.calculate_ev(price, self.config.assumed_win_rate)
         return {
-            "status": "no_signal",
-            "reason": reason,
+            "status": "ready",
+            "reason": f"Will signal {side}",
             "symbol": symbol,
+            "signal": side,
+            "entry_price": price,
+            "ev_pct": ev_info["ev_pct"],
             "elapsed_sec": elapsed_sec,
-            "evaluations": evaluations,
         }
 
     def record_position(self, symbol: str, market_start: int):
@@ -1087,8 +1069,9 @@ class Trade:
     resolution: str  # "UP" or "DOWN" - what actually happened
     binance_open: float  # Binance price at market start
     binance_close: float  # Binance price at market end
-    checkpoint: str
-    signal_confidence: float
+    target_price: float = 0.0  # Chainlink target price (price to beat)
+    checkpoint: str = ""
+    signal_confidence: float = 0.0
 
     def to_dict(self) -> dict:
         slug = f"{self.symbol.lower()}-updown-15m-{self.market_start}"
@@ -1111,6 +1094,7 @@ class Trade:
             "resolution": self.resolution,
             "binance_open": round(self.binance_open, 2),
             "binance_close": round(self.binance_close, 2),
+            "target_price": round(self.target_price, 2),
             "checkpoint": self.checkpoint,
             "signal_confidence": round(self.signal_confidence, 3),
         }
@@ -2036,11 +2020,13 @@ class TradingEngine:
         else:
             window.close_price = price
 
-    def resolve_market(self, symbol: str, market_start: int, market_end: int, binance_open: float, binance_close: float):
+    def resolve_market(self, symbol: str, market_start: int, market_end: int, binance_open: float, binance_close: float, target_price: float = 0.0):
         """
         Resolve a market window and settle positions.
 
         Called when a 15-minute window ends.
+        Args:
+            target_price: Chainlink reference price (price to beat for UP/DOWN)
         """
         window_key = f"{symbol}_{market_start}"
         window = self.market_windows.get(window_key)
@@ -2083,6 +2069,7 @@ class TradingEngine:
                     resolution=resolution,
                     binance_open=binance_open,
                     binance_close=binance_close,
+                    target_price=target_price,
                     checkpoint=position.checkpoint,
                     signal_confidence=0.0,  # Would need to store this
                 )
@@ -2322,6 +2309,7 @@ class TradingEngine:
                         resolution=t_data["resolution"],
                         binance_open=t_data["binance_open"],
                         binance_close=t_data["binance_close"],
+                        target_price=t_data.get("target_price", 0.0),
                         checkpoint=t_data["checkpoint"],
                         signal_confidence=t_data.get("signal_confidence", 0.0),
                     ))

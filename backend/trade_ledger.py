@@ -9,6 +9,7 @@ import sqlite3
 import json
 import logging
 import os
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -102,6 +103,9 @@ class TradeRecord:
     signal_confidence: float
     signal_edge: float
 
+    # Chainlink target price (price to beat for UP/DOWN resolution)
+    target_price: float = 0.0
+
     # Live-specific fields (nullable for paper)
     polymarket_order_id: Optional[str] = None
     tx_hash: Optional[str] = None
@@ -165,6 +169,7 @@ class TradeLedger:
                     is_winner INTEGER NOT NULL,
                     binance_open REAL NOT NULL,
                     binance_close REAL NOT NULL,
+                    target_price REAL NOT NULL DEFAULT 0,
                     checkpoint TEXT NOT NULL,
                     signal_confidence REAL NOT NULL,
                     signal_edge REAL NOT NULL,
@@ -174,6 +179,12 @@ class TradeLedger:
                     notes TEXT
                 )
             """)
+
+            # Migration: Add target_price column if it doesn't exist (for existing DBs)
+            try:
+                conn.execute("ALTER TABLE trades ADD COLUMN target_price REAL NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             # Create indexes for common queries
             conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)")
@@ -249,16 +260,16 @@ class TradeLedger:
                         id, mode, symbol, side, direction,
                         entry_price, exit_price, size, cost_basis, settlement_value,
                         pnl, pnl_pct, entry_time, exit_time, market_start, market_end,
-                        resolution, is_winner, binance_open, binance_close,
+                        resolution, is_winner, binance_open, binance_close, target_price,
                         checkpoint, signal_confidence, signal_edge,
                         polymarket_order_id, tx_hash, created_at, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     trade.id, trade.mode, trade.symbol, trade.side, trade.direction,
                     trade.entry_price, trade.exit_price, trade.size, trade.cost_basis, trade.settlement_value,
                     trade.pnl, trade.pnl_pct, trade.entry_time, trade.exit_time, trade.market_start, trade.market_end,
                     trade.resolution, 1 if trade.is_winner else 0, trade.binance_open, trade.binance_close,
-                    trade.checkpoint, trade.signal_confidence, trade.signal_edge,
+                    trade.target_price, trade.checkpoint, trade.signal_confidence, trade.signal_edge,
                     trade.polymarket_order_id, trade.tx_hash, trade.created_at, trade.notes
                 ))
                 conn.commit()
@@ -764,6 +775,12 @@ class TradeLedger:
 
     def _row_to_trade(self, row: sqlite3.Row) -> TradeRecord:
         """Convert a database row to TradeRecord"""
+        # Handle target_price which may be missing in old rows
+        target_price = 0.0
+        try:
+            target_price = row["target_price"] or 0.0
+        except (KeyError, IndexError):
+            pass
         return TradeRecord(
             id=row["id"],
             mode=row["mode"],
@@ -785,6 +802,7 @@ class TradeLedger:
             is_winner=bool(row["is_winner"]),
             binance_open=row["binance_open"],
             binance_close=row["binance_close"],
+            target_price=target_price,
             checkpoint=row["checkpoint"],
             signal_confidence=row["signal_confidence"],
             signal_edge=row["signal_edge"],
@@ -1098,6 +1116,105 @@ class TradeLedger:
         logger.info(f"Exported {len(trades)} trades to {filepath}")
         return len(trades)
 
+    # -------------------------------------------------------------------------
+    # ARCHIVE OPERATIONS
+    # -------------------------------------------------------------------------
+
+    def archive_losing_trades_to_json(self, output_path: str) -> int:
+        """
+        Archive all losing trades to a JSONL file for analysis.
+
+        Appends to the file if it exists (JSONL format - one JSON per line).
+
+        Args:
+            output_path: Path to output file (e.g., "archives/losing_trades_20260111.json")
+
+        Returns:
+            Number of trades archived
+        """
+        losing_trades = self.get_trades(is_winner=False, limit=100000)
+
+        if not losing_trades:
+            logger.info("No losing trades to archive")
+            return 0
+
+        # Ensure directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        # Append to file in JSONL format (one JSON object per line)
+        with open(output_path, 'a') as f:
+            for trade in losing_trades:
+                f.write(json.dumps(trade.to_dict()) + '\n')
+
+        logger.info(f"Archived {len(losing_trades)} losing trades to {output_path}")
+        return len(losing_trades)
+
+    def purge_old_trades(self, older_than_hours: int = 24) -> int:
+        """
+        Delete trades older than specified hours (after archiving).
+
+        Args:
+            older_than_hours: Delete trades older than this many hours
+
+        Returns:
+            Number of trades deleted
+        """
+        cutoff = int(time.time()) - (older_than_hours * 3600)
+
+        with self._get_connection() as conn:
+            # Count before delete
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE exit_time < ?",
+                (cutoff,)
+            )
+            count = cursor.fetchone()[0]
+
+            if count > 0:
+                conn.execute("DELETE FROM trades WHERE exit_time < ?", (cutoff,))
+                conn.commit()
+                logger.info(f"Purged {count} trades older than {older_than_hours}h")
+
+            return count
+
+    def get_losing_trades_for_analysis(self, symbol: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get losing trades with analysis-friendly data.
+
+        Returns trades enriched with calculated fields useful for loss analysis:
+        - Price difference from target
+        - Time remaining at entry
+        - Confidence at entry
+        """
+        trades = self.get_trades(is_winner=False, symbol=symbol, limit=limit)
+
+        analysis_data = []
+        for t in trades:
+            entry_elapsed = t.entry_time - t.market_start
+            entry_remaining = t.market_end - t.entry_time
+
+            # Calculate how close entry was to target price
+            if t.target_price > 0:
+                if t.side == "UP":
+                    # For UP, we wanted close > target
+                    price_diff = t.binance_close - t.target_price
+                else:
+                    # For DOWN, we wanted close < target
+                    price_diff = t.target_price - t.binance_close
+            else:
+                price_diff = 0.0
+
+            analysis_data.append({
+                **t.to_dict(),
+                "entry_elapsed_sec": entry_elapsed,
+                "entry_remaining_sec": entry_remaining,
+                "price_diff_from_target": round(price_diff, 2),
+                "close_to_target_pct": round(price_diff / t.target_price * 100, 4) if t.target_price > 0 else 0,
+            })
+
+        return analysis_data
+
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -1141,6 +1258,7 @@ def create_trade_record_from_paper(
         checkpoint=paper_trade.checkpoint,
         signal_confidence=paper_trade.signal_confidence,
         signal_edge=signal_edge,
+        target_price=getattr(paper_trade, 'target_price', 0.0),
     )
 
 
@@ -1154,6 +1272,7 @@ def create_trade_record_from_live(
     signal_edge: float = 0.0,
     polymarket_order_id: Optional[str] = None,
     tx_hash: Optional[str] = None,
+    target_price: float = 0.0,
 ) -> TradeRecord:
     """
     Create a TradeRecord from a live position resolution.
@@ -1201,6 +1320,7 @@ def create_trade_record_from_live(
         checkpoint="live",
         signal_confidence=signal_confidence,
         signal_edge=signal_edge,
+        target_price=target_price,
         polymarket_order_id=polymarket_order_id,
         tx_hash=tx_hash,
     )

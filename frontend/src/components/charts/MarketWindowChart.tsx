@@ -296,7 +296,7 @@ function MarketWindowChartComponent({
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1">
             <span className="w-2 h-0.5 bg-amber-500 rounded"></span>
-            <span className="text-zinc-500">{symbol}</span>
+            <span className="text-zinc-500">{symbol} (Binance)</span>
             {currentValues && (
               <span className="font-mono text-zinc-700 dark:text-zinc-300">
                 ${currentValues.binance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -308,11 +308,11 @@ function MarketWindowChartComponent({
               </span>
             )}
           </span>
-          {/* Price to Beat indicator */}
+          {/* Chainlink target indicator */}
           {showPriceToBeat && startPrice && (
             <span className="flex items-center gap-1">
               <span className="w-2 h-0.5 bg-violet-500 rounded border-dashed"></span>
-              <span className="text-zinc-500">Target</span>
+              <span className="text-zinc-500">Chainlink</span>
               <span className="font-mono text-violet-500">
                 ${startPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>

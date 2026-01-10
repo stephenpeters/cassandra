@@ -71,6 +71,8 @@ export interface Market15Min {
   start_time: number;
   end_time: number;
   price: number;
+  down_price?: number;  // RT DOWN price (updated every 500ms)
+  binance_price?: number | null;  // RT Binance price (updated every 500ms)
   volume: number;
   is_active: boolean;
 }

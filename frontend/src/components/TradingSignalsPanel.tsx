@@ -105,7 +105,7 @@ function TradingSignalsPanelComponent({
     : signals.filter((s) => s.symbol === selectedSymbol).slice(0, 10);
 
   // Market window info for title
-  const marketSlug = marketStart ? getMarketSlug(selectedSymbol, marketStart) : null;
+  const marketSlug = marketEnd ? getMarketSlug(selectedSymbol, marketEnd) : null;
   const marketWindowStr = marketStart ? formatMarketWindow(marketStart) : null;
 
   // Calculate checkpoint statuses

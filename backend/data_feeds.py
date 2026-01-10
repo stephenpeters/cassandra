@@ -849,15 +849,14 @@ def scrape_polymarket_target_price(symbol: str, market_start: int) -> float | No
 
         content = resp.text
 
-        # Look for closePrice in the page data - this is the target price for current market
-        # The closePrice of the MOST RECENT previous market = openPrice of current market
-        # Pattern: {"openPrice":XXX,"closePrice":YYY}
-        # Get ALL matches, filter empty ones, take the LAST valid one
-        matches = re.findall(r'"closePrice":([0-9.]+)', content)
+        # Look for openPrice in the page data - this is the target price ("PRICE TO BEAT")
+        # Multiple openPrice values exist - page lists windows from OLDEST to NEWEST
+        # The LAST openPrice is the CURRENT market's starting price
+        matches = re.findall(r'"openPrice":([0-9.]+)', content)
         # Filter to only valid prices (non-empty, reasonable range for crypto)
         valid_prices = [float(m) for m in matches if m and float(m) > 0]
         if valid_prices:
-            return valid_prices[-1]  # Last valid closePrice
+            return valid_prices[-1]  # LAST openPrice = current market's target
 
         # Fallback: look for any price around expected BTC range
         if symbol.upper() == "BTC":

@@ -127,6 +127,11 @@ export function useWebSocket(): UseWebSocketReturn {
         if (msg.symbols) setSymbols(msg.symbols);
         if (msg.paper_trading) setTradingAccount(msg.paper_trading);
         if (msg.live_trading) setLiveStatus(msg.live_trading as LiveTradingStatus);
+        // Sync mode from backend on connect (single source of truth)
+        if (msg.mode && msg.mode.mode) {
+          setCurrentMode(msg.mode.mode as TradingModeValue);
+          console.log("[WS] Mode synced from backend:", msg.mode.mode);
+        }
         break;
 
       case "candle":
@@ -212,6 +217,54 @@ export function useWebSocket(): UseWebSocketReturn {
         }
         break;
 
+      case "price_tick":
+        // Fast price updates (every 500ms) for responsive UI
+        // Updates: UP, DOWN, BTC CURRENT (binance), and computed OVER price
+        if (msg.data) {
+          const prices = msg.data as Record<string, { binance: number | null; up: number; down: number }>;
+          setMarkets15m((prev) => {
+            if (!prev?.active) return prev;
+            const updated = { ...prev.active };
+            for (const [symbol, tick] of Object.entries(prices)) {
+              if (updated[symbol]) {
+                updated[symbol] = {
+                  ...updated[symbol],
+                  price: tick.up,
+                  down_price: tick.down,
+                  binance_price: tick.binance,
+                };
+              }
+            }
+            return { ...prev, active: updated };
+          });
+
+          // Update chart data with latest points (every 500ms)
+          const chartPoints = (msg as { chart_points?: Record<string, { time: number; binancePrice: number; upPrice: number; downPrice: number }> }).chart_points;
+          if (chartPoints) {
+            setChartData((prev) => {
+              const updated = { ...prev };
+              for (const [symbol, point] of Object.entries(chartPoints)) {
+                if (updated[symbol]?.data) {
+                  const data = [...updated[symbol].data];
+                  // Update last point if same second, otherwise append
+                  if (data.length > 0 && data[data.length - 1].time === point.time) {
+                    data[data.length - 1] = point;
+                  } else {
+                    data.push(point);
+                    // Limit to 1800 points (30 min at 1 point/sec)
+                    if (data.length > 1800) {
+                      data.shift();
+                    }
+                  }
+                  updated[symbol] = { ...updated[symbol], data };
+                }
+              }
+              return updated;
+            });
+          }
+        }
+        break;
+
       case "market_trade":
         if (msg.data) {
           const trade = msg.data as MarketTrade;
@@ -284,46 +337,8 @@ export function useWebSocket(): UseWebSocketReturn {
         break;
 
       case "pm_price_update":
-        // Real-time price update from Polymarket WebSocket
-        if (msg.data) {
-          const update = msg.data as PMPriceUpdate;
-
-          // Update market price badges
-          setMarkets15m((prev) => {
-            if (!prev?.active?.[update.symbol]) return prev;
-            const market = prev.active[update.symbol];
-            const newPrice = update.outcome === "UP" ? update.price : market.price;
-            return {
-              ...prev,
-              active: {
-                ...prev.active,
-                [update.symbol]: { ...market, price: newPrice },
-              },
-            };
-          });
-
-          // Update chart data in real-time (update last point)
-          setChartData((prev) => {
-            const symbolData = prev[update.symbol];
-            if (!symbolData?.data?.length) return prev;
-
-            const data = [...symbolData.data];
-            const lastPoint = { ...data[data.length - 1] };
-
-            // Update the appropriate price
-            if (update.outcome === "UP") {
-              lastPoint.upPrice = update.price;
-            } else {
-              lastPoint.downPrice = update.price;
-            }
-
-            data[data.length - 1] = lastPoint;
-            return {
-              ...prev,
-              [update.symbol]: { ...symbolData, data },
-            };
-          });
-        }
+        // Real-time price updates now handled by price_tick (every 500ms)
+        // Backend strategies still have direct RT access via pm_ws_client.get_prices()
         break;
 
       case "ping":

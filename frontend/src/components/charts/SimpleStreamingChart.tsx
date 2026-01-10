@@ -87,6 +87,10 @@ interface SimpleStreamingChartProps {
   showCheckpoints?: boolean;
   signals?: TradingSignal[];
   momentum?: MomentumSignal;
+  // Fast real-time prices (updated every 500ms) - override chart-derived values for display
+  rtBinancePrice?: number;
+  rtUpPrice?: number;
+  rtDownPrice?: number;
 }
 
 function SimpleStreamingChartComponent({
@@ -100,6 +104,9 @@ function SimpleStreamingChartComponent({
   showCheckpoints = false,
   signals = [],
   momentum,
+  rtBinancePrice,
+  rtUpPrice,
+  rtDownPrice,
 }: SimpleStreamingChartProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -125,20 +132,25 @@ function SimpleStreamingChartComponent({
   }, [data, marketStart]);
 
   // Get current values for display
+  // Use RT prices (updated every 500ms) when available, fallback to chart data
   const currentValues = useMemo(() => {
     if (!data || data.length === 0) return null;
     const last = data[data.length - 1];
     const first = data[0];
-    const priceDelta = last.binancePrice - first.binancePrice;
+    // Use RT prices if available, else use chart-derived values
+    const binance = rtBinancePrice ?? last.binancePrice;
+    const up = rtUpPrice ?? last.upPrice;
+    const down = rtDownPrice ?? last.downPrice;
+    const priceDelta = binance - first.binancePrice;
     const priceDeltaPct = (priceDelta / first.binancePrice) * 100;
     return {
-      binance: last.binancePrice,
-      up: last.upPrice,
-      down: last.downPrice,
+      binance,
+      up,
+      down,
       delta: priceDelta,
       deltaPct: priceDeltaPct,
     };
-  }, [data]);
+  }, [data, rtBinancePrice, rtUpPrice, rtDownPrice]);
 
   // Calculate progress through the window
   const windowProgress = useMemo(() => {
@@ -216,17 +228,17 @@ function SimpleStreamingChartComponent({
       {/* Price Comparison Panel - Polymarket Style */}
       {showPriceToBeat && startPrice && currentValues && priceComparison && (
         <div className="flex items-center justify-between mb-2 p-2 bg-zinc-100 dark:bg-zinc-800/70 rounded-lg">
-          {/* Price to Beat */}
+          {/* Price to Beat - Chainlink oracle price at market open */}
           <div className="flex flex-col">
-            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Price to Beat</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Chainlink Target</span>
             <span className="text-lg font-bold font-mono text-violet-600 dark:text-violet-400">
               ${startPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
 
-          {/* Current Price */}
+          {/* Binance Price - Real-time spot price */}
           <div className="flex flex-col items-center">
-            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">{symbol} Current</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Binance</span>
             <span className="text-lg font-bold font-mono text-zinc-800 dark:text-zinc-100">
               ${currentValues.binance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
@@ -249,18 +261,18 @@ function SimpleStreamingChartComponent({
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1">
             <span className="w-2 h-0.5 bg-amber-500 rounded"></span>
-            <span className="text-zinc-500">{symbol}</span>
+            <span className="text-zinc-500">{symbol} (Binance)</span>
             {currentValues && (
               <span className={`font-mono ${currentValues.delta >= 0 ? "text-green-500" : "text-red-500"}`}>
                 ({currentValues.delta >= 0 ? "+" : ""}{currentValues.deltaPct.toFixed(2)}%)
               </span>
             )}
           </span>
-          {/* Price to Beat line indicator */}
+          {/* Chainlink target line indicator */}
           {showPriceToBeat && startPrice && (
             <span className="flex items-center gap-1">
               <span className="w-2 h-0.5 bg-violet-500 rounded border-dashed"></span>
-              <span className="text-zinc-500">Target Line</span>
+              <span className="text-zinc-500">Chainlink Target</span>
             </span>
           )}
         </div>
@@ -298,7 +310,16 @@ function SimpleStreamingChartComponent({
             <YAxis
               yAxisId="left"
               orientation="left"
-              domain={["auto", "auto"]}
+              domain={[
+                (dataMin: number) => {
+                  const min = startPrice ? Math.min(dataMin, startPrice) : dataMin;
+                  return min * 0.999; // Add 0.1% padding below
+                },
+                (dataMax: number) => {
+                  const max = startPrice ? Math.max(dataMax, startPrice) : dataMax;
+                  return max * 1.001; // Add 0.1% padding above
+                },
+              ]}
               tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
               tickFormatter={(v) => `$${(v / 1000).toFixed(1)}k`}
               stroke={isDark ? "#3f3f46" : "#e4e4e7"}

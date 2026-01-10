@@ -42,6 +42,7 @@ class PriceSnapshot:
     elapsed_sec: int             # Seconds into current window
     volume_delta_usd: Optional[float] = None  # Volume delta since window start
     orderbook_imbalance: Optional[float] = None  # Order book bid/ask imbalance
+    target_price: Optional[float] = None  # Chainlink reference price (price to beat)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -108,9 +109,16 @@ class MarketDataStore:
                     market_end INTEGER NOT NULL,
                     elapsed_sec INTEGER NOT NULL,
                     volume_delta_usd REAL,
-                    orderbook_imbalance REAL
+                    orderbook_imbalance REAL,
+                    target_price REAL
                 )
             """)
+
+            # Migration: Add target_price column if it doesn't exist (for existing DBs)
+            try:
+                conn.execute("ALTER TABLE price_snapshots ADD COLUMN target_price REAL")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON price_snapshots(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_symbol ON price_snapshots(symbol)")
@@ -177,12 +185,13 @@ class MarketDataStore:
                     INSERT OR REPLACE INTO price_snapshots (
                         id, timestamp, symbol, binance_price,
                         pm_up_price, pm_down_price, market_start, market_end,
-                        elapsed_sec, volume_delta_usd, orderbook_imbalance
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        elapsed_sec, volume_delta_usd, orderbook_imbalance, target_price
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     snapshot.id, snapshot.timestamp, snapshot.symbol, snapshot.binance_price,
                     snapshot.pm_up_price, snapshot.pm_down_price, snapshot.market_start, snapshot.market_end,
-                    snapshot.elapsed_sec, snapshot.volume_delta_usd, snapshot.orderbook_imbalance
+                    snapshot.elapsed_sec, snapshot.volume_delta_usd, snapshot.orderbook_imbalance,
+                    snapshot.target_price
                 ))
                 conn.commit()
             return True
@@ -357,6 +366,12 @@ class MarketDataStore:
 
     def _row_to_snapshot(self, row: sqlite3.Row) -> PriceSnapshot:
         """Convert database row to PriceSnapshot"""
+        # Handle target_price which may be missing in old rows
+        target_price = None
+        try:
+            target_price = row["target_price"]
+        except (KeyError, IndexError):
+            pass
         return PriceSnapshot(
             id=row["id"],
             timestamp=row["timestamp"],
@@ -369,6 +384,7 @@ class MarketDataStore:
             elapsed_sec=row["elapsed_sec"],
             volume_delta_usd=row["volume_delta_usd"],
             orderbook_imbalance=row["orderbook_imbalance"],
+            target_price=target_price,
         )
 
     def _row_to_trade(self, row: sqlite3.Row) -> MarketTradeRecord:

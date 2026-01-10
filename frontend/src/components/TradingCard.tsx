@@ -60,7 +60,7 @@ function formatTime(timestamp: number): string {
 }
 
 function formatSlug(slug: string): string {
-  // Parse slug like "btc-updown-15m-1767760200" to "BTC @ 11:30 AM ET"
+  // Parse slug like "btc-updown-15m-1767760200" to "BTC 10:45-11AM ET" (matching PM format)
   const parts = slug.split("-");
   if (parts.length < 4) return slug;
 
@@ -69,15 +69,27 @@ function formatSlug(slug: string): string {
 
   if (isNaN(timestamp)) return slug;
 
-  const date = new Date(timestamp * 1000);
-  const timeStr = date.toLocaleTimeString("en-US", {
+  // Start time from the slug timestamp
+  const startDate = new Date(timestamp * 1000);
+  // End time is 15 minutes later
+  const endDate = new Date((timestamp + 900) * 1000);
+
+  const formatOptions: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
     timeZone: "America/New_York",
-  });
+  };
 
-  return `${symbol} @ ${timeStr} ET`;
+  const startStr = startDate.toLocaleTimeString("en-US", formatOptions);
+  const endStr = endDate.toLocaleTimeString("en-US", formatOptions);
+
+  // Format like "10:45AM-11AM" (remove space before AM/PM, remove minutes if :00)
+  const formatTime = (str: string) => {
+    return str.replace(" ", "").replace(":00", "");
+  };
+
+  return `${symbol} ${formatTime(startStr)}-${formatTime(endStr)} ET`;
 }
 
 function formatUptime(seconds: number): string {
@@ -282,17 +294,15 @@ function TradingCardComponent({
                 ? "text-red-600 dark:text-red-500"
                 : isOffMode
                 ? "text-zinc-500"
-                : "text-blue-600 dark:text-blue-500"
+                : "text-zinc-800 dark:text-zinc-200"
             }`}>
               {isLiveMode ? (
                 <span className="flex items-center gap-2">
                   <ShieldAlert className="h-4 w-4" />
-                  LIVE TRADING
+                  Trading
                 </span>
-              ) : isOffMode ? (
-                "OFFLINE"
               ) : (
-                "PAPER TRADING"
+                "Trading"
               )}
             </CardTitle>
             <div className="flex items-center gap-1 text-xs text-zinc-500 whitespace-nowrap">
@@ -329,18 +339,6 @@ function TradingCardComponent({
             >
               Settings
             </button>
-
-            {/* Active/Paused toggle */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500">
-                {isEnabled ? "Active" : "Paused"}
-              </span>
-              <Switch
-                checked={isEnabled}
-                onCheckedChange={onToggle}
-                disabled={isOffMode}
-              />
-            </div>
           </div>
         </div>
       </CardHeader>
@@ -392,7 +390,7 @@ function TradingCardComponent({
                   <span className="text-xs text-zinc-500">Manual Order</span>
                   {markets15m?.active?.[manualSymbol] && (
                     <span className="text-xs font-mono text-zinc-600 dark:text-zinc-300">
-                      — {formatSlug(`${manualSymbol.toLowerCase()}-updown-15m-${markets15m.active[manualSymbol].start_time}`)}
+                      — {formatSlug(`${manualSymbol.toLowerCase()}-updown-15m-${markets15m.active[manualSymbol].end_time}`)}
                     </span>
                   )}
                 </div>

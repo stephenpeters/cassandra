@@ -71,7 +71,6 @@ class TestSniperStrategy:
         return SniperStrategy(SniperConfig(
             min_price=0.70,
             min_elapsed_sec=300,  # 5 minutes
-            min_ev_pct=0.0,  # Disable EV check for aggressive mode
         ))
 
     # -------------------------------------------------------------------------
@@ -112,23 +111,25 @@ class TestSniperStrategy:
         )
         assert signal is None
 
-    def test_no_signal_below_price_threshold(self, strategy):
-        """No signal when neither side meets min_price."""
+    def test_signal_picks_higher_probability_side(self, strategy):
+        """Signal picks the higher-probability side (no min_price gating)."""
         signal = strategy.check_signal(
             symbol="BTC",
-            up_price=0.60,  # < 0.75 default
+            up_price=0.60,  # Higher side wins
             down_price=0.40,
             elapsed_sec=700,
             market_start=1000000,
         )
-        assert signal is None
+        # Sniper now signals on the higher side without min_price gating
+        assert signal is not None
+        assert signal[0] == "UP"
 
     # -------------------------------------------------------------------------
     # Positive Signal Tests
     # -------------------------------------------------------------------------
 
     def test_up_signal_when_conditions_met(self, strategy):
-        """UP signal when up_price >= min_price and elapsed >= min_elapsed."""
+        """UP signal when up_price > down_price and elapsed >= min_elapsed."""
         signal = strategy.check_signal(
             symbol="BTC",
             up_price=0.80,
@@ -138,10 +139,10 @@ class TestSniperStrategy:
         )
         assert signal is not None
         assert signal[0] == "UP"
-        assert "ev_pct" in signal[1]  # Contains EV info
+        assert "ev_pct" in signal[1]  # Contains EV info (for reporting)
 
     def test_down_signal_when_conditions_met(self, strategy):
-        """DOWN signal when down_price >= min_price and up_price < min_price."""
+        """DOWN signal when down_price > up_price."""
         signal = strategy.check_signal(
             symbol="ETH",
             up_price=0.20,
@@ -152,14 +153,13 @@ class TestSniperStrategy:
         assert signal is not None
         assert signal[0] == "DOWN"
 
-    def test_up_prioritized_over_down(self, strategy):
-        """UP is returned when both sides meet threshold (edge case)."""
-        # This shouldn't normally happen in real markets (prices sum to ~1)
-        # but tests the priority logic
+    def test_up_wins_when_prices_equal(self, strategy):
+        """UP is returned when both sides are equal (tiebreaker)."""
+        # When prices are equal, UP wins by convention
         signal = strategy.check_signal(
             symbol="BTC",
-            up_price=0.80,
-            down_price=0.80,  # Unrealistic but tests priority
+            up_price=0.50,
+            down_price=0.50,
             elapsed_sec=700,
             market_start=1000002,
         )
@@ -170,11 +170,11 @@ class TestSniperStrategy:
     # Edge Case Tests
     # -------------------------------------------------------------------------
 
-    def test_signal_exactly_at_price_threshold(self, strategy):
-        """Signal triggers at exactly min_price (inclusive)."""
+    def test_signal_at_high_probability(self, strategy):
+        """Signal triggers at high probability (75%)."""
         signal = strategy.check_signal(
             symbol="BTC",
-            up_price=0.75,  # Exactly at threshold
+            up_price=0.75,
             down_price=0.25,
             elapsed_sec=700,
             market_start=1000003,
@@ -194,16 +194,18 @@ class TestSniperStrategy:
         assert signal is not None
         assert signal[0] == "UP"
 
-    def test_no_signal_just_below_price_threshold(self, strategy):
-        """No signal at 0.749 (just below 0.75)."""
+    def test_signal_at_low_probability_still_works(self, strategy):
+        """Signal works at any probability (no min_price gating)."""
         signal = strategy.check_signal(
             symbol="BTC",
-            up_price=0.749,
-            down_price=0.251,
+            up_price=0.51,  # Just above 50%
+            down_price=0.49,
             elapsed_sec=700,
             market_start=1000005,
         )
-        assert signal is None
+        # Sniper signals on higher side regardless of probability level
+        assert signal is not None
+        assert signal[0] == "UP"
 
     def test_no_signal_just_before_time_threshold(self, strategy):
         """No signal at 599 seconds (just below 600)."""
@@ -349,11 +351,11 @@ class TestSniperStrategyIntegration:
         assert signal is not None
         assert signal[0] == "UP"
 
-    def test_eth_reversal_avoided(self):
-        """Test that early reversals are avoided by time threshold."""
+    def test_eth_reversal_detected_after_time_threshold(self):
+        """Test that market reversals are detected once time threshold is met."""
         strategy = SniperStrategy(SniperConfig(markets=["ETH"]))
 
-        # At 5 minutes, price shows 72c UP - but we don't trigger
+        # At 5 minutes, price shows 72c UP - but we don't trigger (too early)
         signal_early = strategy.check_signal(
             symbol="ETH",
             up_price=0.72,
@@ -367,11 +369,13 @@ class TestSniperStrategyIntegration:
         signal_late = strategy.check_signal(
             symbol="ETH",
             up_price=0.35,
-            down_price=0.65,  # Below threshold still
+            down_price=0.65,  # DOWN is now higher
             elapsed_sec=600,
             market_start=1704067200,
         )
-        assert signal_late is None  # No signal because neither side hits 75c
+        # Now signals DOWN because it's the higher side and time threshold met
+        assert signal_late is not None
+        assert signal_late[0] == "DOWN"
 
     def test_xrp_not_in_default_markets(self):
         """XRP signals are filtered by default config."""

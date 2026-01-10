@@ -152,9 +152,9 @@ export function PolymarketDashboard({
                         ↑${(market.price).toFixed(2)}
                       </span>
                     </SimpleTooltip>
-                    <SimpleTooltip content={`Buy DOWN token at $${(1 - market.price).toFixed(2)} - pays $1 if price goes down`}>
+                    <SimpleTooltip content={`Buy DOWN token at $${(market.down_price ?? (1 - market.price)).toFixed(2)} - pays $1 if price goes down`}>
                       <span className="text-red-500 font-mono cursor-help">
-                        ↓${(1 - market.price).toFixed(2)}
+                        ↓${(market.down_price ?? (1 - market.price)).toFixed(2)}
                       </span>
                     </SimpleTooltip>
                   </div>
@@ -186,7 +186,7 @@ export function PolymarketDashboard({
             {/* Left: Market title */}
             <span className="font-semibold text-lg">
               {currentMarket
-                ? `${selectedSymbol.toLowerCase()}-updown-15m @ ${new Date(currentMarket.start_time * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} ET`
+                ? `${selectedSymbol.toLowerCase()}-updown-15m @ ${new Date(currentMarket.end_time * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} ET`
                 : selectedSymbol}
             </span>
             {/* Center: Flip countdown timer */}
@@ -206,14 +206,14 @@ export function PolymarketDashboard({
                     UP: ${currentMarket.price.toFixed(2)}
                   </span>
                 </SimpleTooltip>
-                <SimpleTooltip content={`DOWN token price: $${(1 - currentMarket.price).toFixed(3)} - implied ${((1 - currentMarket.price) * 100).toFixed(1)}% chance of price decrease`}>
+                <SimpleTooltip content={`DOWN token price: $${(currentMarket.down_price ?? (1 - currentMarket.price)).toFixed(3)} - implied ${((currentMarket.down_price ?? (1 - currentMarket.price)) * 100).toFixed(1)}% chance of price decrease`}>
                   <span className="text-red-500 font-mono font-semibold cursor-help">
-                    DOWN: ${(1 - currentMarket.price).toFixed(2)}
+                    DOWN: ${(currentMarket.down_price ?? (1 - currentMarket.price)).toFixed(2)}
                   </span>
                 </SimpleTooltip>
                 <SimpleTooltip content="Open this market on Polymarket">
                   <a
-                    href={`https://polymarket.com/event/${selectedSymbol.toLowerCase()}-updown-15m-${currentMarket.start_time}`}
+                    href={`https://polymarket.com/event/${selectedSymbol.toLowerCase()}-updown-15m-${currentMarket.end_time}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
@@ -240,6 +240,10 @@ export function PolymarketDashboard({
                 showCheckpoints={false}  // Only needed for latency_gap strategy
                 signals={signals}
                 momentum={selectedMomentum}
+                // Fast RT prices (updated every 500ms)
+                rtBinancePrice={currentMarket?.binance_price ?? undefined}
+                rtUpPrice={currentMarket?.price}
+                rtDownPrice={currentMarket?.down_price}
               />
             ) : (
               <div className="h-[150px] flex flex-col items-center justify-center text-sm text-zinc-500">

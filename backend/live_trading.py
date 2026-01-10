@@ -131,6 +131,7 @@ logger = setup_logging()
 
 class TradingMode(Enum):
     """Trading mode selection"""
+    OFF = "off"      # Kill switch - no trading
     PAPER = "paper"  # Real signals, simulated execution (no real money)
     LIVE = "live"    # Real money trades via Polymarket CLOB
 
@@ -139,8 +140,8 @@ class TradingMode(Enum):
 class LiveTradingConfig:
     """Live trading configuration with safety limits"""
 
-    # Mode
-    mode: TradingMode = TradingMode.PAPER
+    # Mode - defaults to OFF for safety on startup
+    mode: TradingMode = TradingMode.OFF
 
     # API Configuration
     clob_host: str = "https://clob.polymarket.com"
@@ -193,7 +194,7 @@ class LiveTradingConfig:
     def from_env(cls) -> "LiveTradingConfig":
         """Load config from environment variables"""
         return cls(
-            mode=TradingMode(os.getenv("TRADING_MODE", "paper")),
+            mode=TradingMode(os.getenv("TRADING_MODE", "off")),
             # Wallet signature type: 0=EOA, 1=Embedded/Magic, 2=Browser
             signature_type=int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0")),
             # Risk limits from .env (with defaults)

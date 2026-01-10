@@ -264,16 +264,6 @@ function SimpleStreamingChartComponent({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-0.5 bg-green-500 rounded"></span>
-            <span className="text-zinc-400">UP</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-0.5 bg-red-500 rounded"></span>
-            <span className="text-zinc-400">DN</span>
-          </span>
-        </div>
       </div>
 
       {/* Chart */}
@@ -316,18 +306,6 @@ function SimpleStreamingChartComponent({
               axisLine={false}
               width={40}
             />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              domain={[0, 1]}
-              tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
-              tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
-              stroke={isDark ? "#3f3f46" : "#e4e4e7"}
-              tickLine={false}
-              axisLine={false}
-              width={35}
-            />
-
             {/* Price to beat reference line */}
             {showPriceToBeat && startPrice && (
               <ReferenceLine
@@ -346,28 +324,6 @@ function SimpleStreamingChartComponent({
               dataKey="binancePrice"
               stroke="#f59e0b"
               strokeWidth={2}
-              dot={false}
-              isAnimationActive={false}
-            />
-
-            {/* UP price line */}
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="upPrice"
-              stroke="#22c55e"
-              strokeWidth={1.5}
-              dot={false}
-              isAnimationActive={false}
-            />
-
-            {/* DOWN price line */}
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="downPrice"
-              stroke="#ef4444"
-              strokeWidth={1.5}
               dot={false}
               isAnimationActive={false}
             />

@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "@polymarket/clob-client": "^5.2.0",
+    "dotenv": "^16.6.1",
     "ethers": "^5.8.0"
   }
 }

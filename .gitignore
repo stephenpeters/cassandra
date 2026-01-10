@@ -34,7 +34,10 @@ npm-debug.log*
 
 # Testing
 coverage/
+.coverage
 .pytest_cache/
+test-results/
+frontend/test-results/
 
 # Misc
 *.pem

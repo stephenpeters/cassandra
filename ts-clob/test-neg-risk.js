@@ -1,10 +1,16 @@
+require('dotenv').config({ path: '../backend/.env' });
 const { ClobClient } = require("@polymarket/clob-client");
 const { Wallet } = require("ethers");
 
-const PRIVATE_KEY = "f2603733a2748b8c4f56cd708bf8146621beb3b6c2e06be2101828166427f5a5";
-const PROXY_WALLET = "0x21f6163c35B3B2523a4db1cf61B33E55b8e071b1";
+const PRIVATE_KEY = process.env.POLYMARKET_PRIVATE_KEY;
+const PROXY_WALLET = process.env.POLYMARKET_PROXY_WALLET || "0x21f6163c35B3B2523a4db1cf61B33E55b8e071b1";
 const HOST = "https://clob.polymarket.com";
 const CHAIN_ID = 137;
+
+if (!PRIVATE_KEY) {
+    console.error("Error: POLYMARKET_PRIVATE_KEY not found in ../backend/.env");
+    process.exit(1);
+}
 
 async function main() {
     const wallet = new Wallet(PRIVATE_KEY);

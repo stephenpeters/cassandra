@@ -845,10 +845,9 @@ class LiveTradingEngine:
                         logger.error("Failed to refresh credentials")
 
                 if attempt < max_retries - 1:
-                    # Exponential backoff: 1s, 2s, 4s (non-blocking)
-                    wait_time = 2 ** attempt
-                    logger.info(f"Retrying in {wait_time}s...")
-                    await asyncio.sleep(wait_time)
+                    # Short fixed delay - liquidity issue, not rate limit
+                    logger.info(f"Retrying in 0.3s...")
+                    await asyncio.sleep(0.3)
 
         # All retries failed
         order.status = "failed"

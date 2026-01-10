@@ -66,6 +66,25 @@ class PMWebSocketClient:
         self._reconnect_delay = 1
         self._last_message_time = 0
         self._message_count = 0  # For debugging first few messages
+        # Price cache: "SYMBOL_OUTCOME" -> {"price": float, "timestamp": int}
+        self._price_cache: dict[str, dict] = {}
+
+    def get_price(self, symbol: str, outcome: str) -> Optional[float]:
+        """Get cached real-time price for symbol/outcome. Returns None if not available."""
+        key = f"{symbol.upper()}_{outcome.upper()}"
+        cached = self._price_cache.get(key)
+        if cached:
+            # Only return if price is less than 10 seconds old
+            age = time.time() - cached.get("timestamp", 0)
+            if age < 10:
+                return cached.get("price")
+        return None
+
+    def get_prices(self, symbol: str) -> tuple[Optional[float], Optional[float]]:
+        """Get cached UP and DOWN prices for a symbol. Returns (up_price, down_price)."""
+        up = self.get_price(symbol, "UP")
+        down = self.get_price(symbol, "DOWN")
+        return (up, down)
 
     async def start(self):
         """Start the WebSocket connection with auto-reconnect"""
@@ -201,6 +220,13 @@ class PMWebSocketClient:
             update_type="price_change",
         )
 
+        # Cache the price for synchronous access
+        cache_key = f"{update.symbol}_{update.outcome}"
+        self._price_cache[cache_key] = {
+            "price": update.price,
+            "timestamp": time.time(),
+        }
+
         if self.on_price_update:
             self.on_price_update(update)
 
@@ -223,6 +249,13 @@ class PMWebSocketClient:
             timestamp=data.get("timestamp", int(time.time() * 1000)),
             update_type="last_trade_price",
         )
+
+        # Cache the price for synchronous access
+        cache_key = f"{update.symbol}_{update.outcome}"
+        self._price_cache[cache_key] = {
+            "price": update.price,
+            "timestamp": time.time(),
+        }
 
         if self.on_price_update:
             self.on_price_update(update)

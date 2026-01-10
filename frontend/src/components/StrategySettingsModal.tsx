@@ -1,9 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { X, Sliders, TrendingUp, TrendingDown, Activity, AlertTriangle } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { X, Sliders, Target, TrendingDown, Clock, Users, Zap, AlertTriangle } from "lucide-react";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import type { TradingConfig, LiveTradingStatus } from "@/types";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+type TabType = "sniper" | "dip_arb" | "latency_arb" | "copy_trading" | "latency_gap" | "live_tools";
+
+interface StrategyConfig {
+  enabled: boolean;
+  markets: string[];
+  settings: Record<string, unknown>;
+}
 
 interface StrategySettingsModalProps {
   isOpen: boolean;
@@ -15,57 +25,13 @@ interface StrategySettingsModalProps {
   onSetAllowances?: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
 }
 
-interface IndicatorConfig {
-  key: keyof TradingConfig;
-  name: string;
-  description: string;
-  icon: "trend" | "activity";
-}
-
-const INDICATORS: IndicatorConfig[] = [
-  {
-    key: "use_edge",
-    name: "Edge (Latency Gap)",
-    description: "The price difference between Binance spot price movement and Polymarket odds. Example: If BTC rises 0.1% on Binance but Polymarket UP odds only show 52%, there's ~8% edge if fair value should be 60%.",
-    icon: "trend",
-  },
-  {
-    key: "use_volume_delta",
-    name: "Volume Delta",
-    description: "Net directional volume = Buy volume minus Sell volume. Positive = more buyers, confirms upward momentum. Example: +$50K means buyers outpacing sellers by $50K in the window.",
-    icon: "activity",
-  },
-  {
-    key: "use_orderbook",
-    name: "Order Book Imbalance",
-    description: "Ratio of bid orders vs ask orders near current price. +40% means 70% bids vs 30% asks - more buyers waiting. Shows where large orders are stacked.",
-    icon: "activity",
-  },
-  {
-    key: "use_vwap",
-    name: "VWAP",
-    description: "Volume Weighted Average Price - the average price weighted by volume traded. Price above VWAP = bullish (buyers paying up), below = bearish (sellers dumping).",
-    icon: "trend",
-  },
-  {
-    key: "use_rsi",
-    name: "RSI",
-    description: "Relative Strength Index (0-100). Below 30 = oversold (likely to bounce UP). Above 70 = overbought (likely to pull DOWN). Measures momentum exhaustion.",
-    icon: "activity",
-  },
-  {
-    key: "use_adx",
-    name: "ADX",
-    description: "Average Directional Index (0-100). Measures trend STRENGTH not direction. Above 25 = strong trend (momentum likely to continue). Below 20 = ranging/choppy.",
-    icon: "activity",
-  },
-  {
-    key: "use_supertrend",
-    name: "Supertrend",
-    description: "ATR-based trend indicator. Uses volatility bands to give clear UP/DOWN signal. When price closes above upper band = bullish trend, below lower band = bearish trend.",
-    icon: "trend",
-  },
-];
+const DEFAULT_CONFIGS: Record<string, StrategyConfig> = {
+  sniper: { enabled: true, markets: ["BTC"], settings: { min_price: 0.75, max_price: 0.98, min_elapsed_sec: 600, min_ev_pct: 3.0 } },
+  dip_arb: { enabled: false, markets: ["BTC"], settings: { dip_threshold: 0.15, window_minutes: 2, sum_target: 0.95 } },
+  latency_arb: { enabled: false, markets: ["BTC"], settings: { min_move_pct: 0.3, take_profit_pct: 6.0, max_entry_price: 0.65 } },
+  copy_trading: { enabled: false, markets: ["BTC"], settings: { position_multiplier: 0.5, max_position_usd: 100 } },
+  latency_gap: { enabled: true, markets: ["BTC", "ETH"], settings: { min_edge_pct: 5.0, min_confidence: 0.6 } },
+};
 
 export function StrategySettingsModal({
   isOpen,
@@ -76,7 +42,16 @@ export function StrategySettingsModal({
   onTestOrder,
   onSetAllowances,
 }: StrategySettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<TabType>("sniper");
   const [localConfig, setLocalConfig] = useState<Partial<TradingConfig>>({});
+  const [saving, setSaving] = useState(false);
+
+  // Strategy configs
+  const [sniperConfig, setSniperConfig] = useState<StrategyConfig>(DEFAULT_CONFIGS.sniper);
+  const [dipArbConfig, setDipArbConfig] = useState<StrategyConfig>(DEFAULT_CONFIGS.dip_arb);
+  const [latencyArbConfig, setLatencyArbConfig] = useState<StrategyConfig>(DEFAULT_CONFIGS.latency_arb);
+  const [copyTradingConfig, setCopyTradingConfig] = useState<StrategyConfig>(DEFAULT_CONFIGS.copy_trading);
+  const [latencyGapConfig, setLatencyGapConfig] = useState<StrategyConfig>(DEFAULT_CONFIGS.latency_gap);
 
   // Manual order state
   const [testSymbol, setTestSymbol] = useState<"BTC" | "ETH" | "SOL">("BTC");
@@ -84,72 +59,81 @@ export function StrategySettingsModal({
   const [testAmount, setTestAmount] = useState(5);
   const [testOrderLoading, setTestOrderLoading] = useState(false);
   const [testOrderResult, setTestOrderResult] = useState<{ success: boolean; error?: string } | null>(null);
-
-  // Allowances state
   const [allowancesLoading, setAllowancesLoading] = useState(false);
   const [allowancesResult, setAllowancesResult] = useState<{ success: boolean; error?: string } | null>(null);
-
-  // API key from localStorage
   const [apiKey, setApiKey] = useState("");
 
+  // Load API key
   useEffect(() => {
     const savedKey = localStorage.getItem("predmkt_api_key");
     if (savedKey) setApiKey(savedKey);
   }, [isOpen]);
 
-  useEffect(() => {
-    if (config) {
-      setLocalConfig({
-        // Tiered confirmation
-        min_confirmations: config.min_confirmations ?? 2,
-        partial_size_pct: config.partial_size_pct ?? 50,
-        edge_mandatory: config.edge_mandatory ?? false,
+  // Load strategies from API
+  const loadStrategies = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/strategies`);
+      if (res.ok) {
+        const data = await res.json();
+        const strategies = data.strategies || {};
 
-        // Indicator toggles
-        use_edge: config.use_edge ?? true,
-        use_volume_delta: config.use_volume_delta ?? true,
-        use_orderbook: config.use_orderbook ?? true,
-        use_vwap: config.use_vwap ?? true,
-        use_rsi: config.use_rsi ?? true,
-        use_adx: config.use_adx ?? true,
-        use_supertrend: config.use_supertrend ?? true,
-
-        // Thresholds
-        min_edge_pct: config.min_edge_pct ?? 5,
-        min_volume_delta_usd: config.min_volume_delta_usd ?? 10000,
-        min_orderbook_imbalance: config.min_orderbook_imbalance ?? 0.1,
-        rsi_oversold: config.rsi_oversold ?? 30,
-        rsi_overbought: config.rsi_overbought ?? 70,
-        adx_trend_threshold: config.adx_trend_threshold ?? 25,
-        supertrend_multiplier: config.supertrend_multiplier ?? 3.0,
-      });
+        if (strategies.sniper) setSniperConfig({ enabled: strategies.sniper.enabled, markets: strategies.sniper.markets, settings: strategies.sniper.settings });
+        if (strategies.dip_arb) setDipArbConfig({ enabled: strategies.dip_arb.enabled, markets: strategies.dip_arb.markets, settings: strategies.dip_arb.settings });
+        if (strategies.latency_arb) setLatencyArbConfig({ enabled: strategies.latency_arb.enabled, markets: strategies.latency_arb.markets, settings: strategies.latency_arb.settings });
+        if (strategies.copy_trading) setCopyTradingConfig({ enabled: strategies.copy_trading.enabled, markets: strategies.copy_trading.markets, settings: strategies.copy_trading.settings });
+        if (strategies.latency_gap) setLatencyGapConfig({ enabled: strategies.latency_gap.enabled, markets: strategies.latency_gap.markets, settings: strategies.latency_gap.settings });
+      }
+    } catch (e) {
+      console.error("Failed to load strategies:", e);
     }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) loadStrategies();
+  }, [isOpen, loadStrategies]);
+
+  useEffect(() => {
+    if (config) setLocalConfig(config);
   }, [config]);
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    onConfigUpdate(localConfig);
-    onClose();
+  // Save strategy to backend
+  const saveStrategy = async (name: string, cfg: StrategyConfig) => {
+    const key = apiKey || "paper-mode";
+    await fetch(`${API_URL}/api/strategies/${name}/enable?enabled=${cfg.enabled}`, { method: "POST", headers: { "X-API-Key": key } });
+    await fetch(`${API_URL}/api/strategies/${name}/markets`, { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": key }, body: JSON.stringify(cfg.markets) });
+    if (Object.keys(cfg.settings).length > 0) {
+      await fetch(`${API_URL}/api/strategies/${name}/settings`, { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": key }, body: JSON.stringify(cfg.settings) });
+    }
   };
 
-  const handleToggle = (key: keyof TradingConfig) => {
-    setLocalConfig({ ...localConfig, [key]: !localConfig[key] });
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await saveStrategy("sniper", sniperConfig);
+      await saveStrategy("dip_arb", dipArbConfig);
+      await saveStrategy("latency_arb", latencyArbConfig);
+      await saveStrategy("copy_trading", copyTradingConfig);
+      await saveStrategy("latency_gap", latencyGapConfig);
+      onConfigUpdate(localConfig);
+      onClose();
+    } catch (error) {
+      console.error("[Save] Failed:", error);
+      alert(`Save failed: ${error}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Handle test order
   const handleTestOrder = async () => {
     if (!onTestOrder || !apiKey) return;
-
     setTestOrderLoading(true);
     setTestOrderResult(null);
-
     try {
       const result = await onTestOrder(testSymbol, testSide, testAmount, apiKey);
       setTestOrderResult(result);
-      if (result.success) {
-        setTimeout(() => setTestOrderResult(null), 5000);
-      }
+      if (result.success) setTimeout(() => setTestOrderResult(null), 5000);
     } catch {
       setTestOrderResult({ success: false, error: "Unexpected error" });
     } finally {
@@ -157,19 +141,14 @@ export function StrategySettingsModal({
     }
   };
 
-  // Handle setting allowances
   const handleSetAllowances = async () => {
     if (!onSetAllowances || !apiKey) return;
-
     setAllowancesLoading(true);
     setAllowancesResult(null);
-
     try {
       const result = await onSetAllowances(apiKey);
       setAllowancesResult(result);
-      if (result.success) {
-        setTimeout(() => setAllowancesResult(null), 5000);
-      }
+      if (result.success) setTimeout(() => setAllowancesResult(null), 5000);
     } catch {
       setAllowancesResult({ success: false, error: "Unexpected error" });
     } finally {
@@ -179,550 +158,227 @@ export function StrategySettingsModal({
 
   const isLiveMode = liveStatus?.mode === "live";
 
-  // Count enabled indicators
-  const enabledCount = INDICATORS.filter(
-    (ind) => localConfig[ind.key] as boolean
-  ).length;
+  const tabs: { id: TabType; label: string; icon: React.ReactNode; color: string }[] = [
+    { id: "sniper", label: "Sniper", icon: <Target className="w-4 h-4" />, color: "amber" },
+    { id: "dip_arb", label: "DipArb", icon: <TrendingDown className="w-4 h-4" />, color: "emerald" },
+    { id: "latency_arb", label: "LatencyArb", icon: <Clock className="w-4 h-4" />, color: "cyan" },
+    { id: "copy_trading", label: "CopyTrade", icon: <Users className="w-4 h-4" />, color: "pink" },
+    { id: "latency_gap", label: "LatencyGap", icon: <Zap className="w-4 h-4" />, color: "purple" },
+    ...(isLiveMode ? [{ id: "live_tools" as TabType, label: "Live", icon: <AlertTriangle className="w-4 h-4" />, color: "red" }] : []),
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="relative bg-white dark:bg-zinc-900 rounded-lg shadow-xl border border-zinc-300 dark:border-zinc-700 w-full max-w-xl max-h-[85vh] overflow-y-auto mx-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white dark:bg-zinc-900 rounded-lg shadow-xl border border-zinc-300 dark:border-zinc-700 w-full max-w-2xl max-h-[85vh] overflow-hidden mx-4">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-zinc-200 dark:border-zinc-700">
           <div className="flex items-center gap-2">
             <Sliders className="w-5 h-5 text-purple-500" />
             <h2 className="text-lg font-semibold">Strategy Settings</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <button onClick={onClose} className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"><X className="w-5 h-5" /></button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-zinc-200 dark:border-zinc-700 overflow-x-auto">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                activeTab === tab.id
+                  ? `text-${tab.color}-500 border-b-2 border-${tab.color}-500 bg-${tab.color}-500/10`
+                  : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Content */}
-        <div className="p-4 space-y-6">
-          {/* Strategy Overview */}
-          <div className="p-3 bg-purple-500/10 rounded-lg border border-purple-500/20">
-            <p className="text-xs text-purple-600 dark:text-purple-400">
-              <strong>Tiered Confirmation:</strong> Instead of requiring ALL indicators,
-              configure how many must agree before entering a trade. More confirmations = safer but fewer trades.
-            </p>
-          </div>
-
-          {/* Section 1: Confirmation Requirements */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 border-b border-zinc-200 dark:border-zinc-700 pb-1">
-              Confirmation Requirements
-            </h3>
-
-            <div className="grid grid-cols-2 gap-4">
-              {/* Min Confirmations */}
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm font-medium">Min Confirmations</span>
-                  <InfoTooltip content="Minimum indicators that must confirm the trade direction. 2 = aggressive, 3 = balanced, 4+ = conservative." />
-                </div>
-                <div className="flex gap-2">
-                  {[2, 3, 4].map((n) => (
-                    <button
-                      key={n}
-                      onClick={() => setLocalConfig({ ...localConfig, min_confirmations: n })}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        localConfig.min_confirmations === n
-                          ? "bg-purple-500 text-white"
-                          : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
-                      }`}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-zinc-500 mt-1">
-                  {enabledCount} indicators enabled. Need {localConfig.min_confirmations} to trade.
+        <div className="p-4 overflow-y-auto max-h-[calc(85vh-180px)]">
+          {/* Sniper Tab */}
+          {activeTab === "sniper" && (
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-500/10 rounded-lg border border-amber-500/20">
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  <strong>Sniper Strategy:</strong> Buy high-probability outcomes (75c-98c) after 10 minutes when EV &gt; 3%.
                 </p>
               </div>
-
-              {/* Partial Size */}
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm font-medium">Partial Size %</span>
-                  <InfoTooltip content="Position size when you have exactly min_confirmations. Full size when you have more." />
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
+                <input type="checkbox" checked={sniperConfig.enabled} onChange={(e) => setSniperConfig({ ...sniperConfig, enabled: e.target.checked })} className="rounded" />
+                <span className="text-sm font-medium">Enable Sniper Strategy</span>
+              </label>
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Min Price</span><span className="font-mono text-amber-500">{String(sniperConfig.settings.min_price)}c</span></div>
+                  <input type="range" min="0.5" max="0.9" step="0.05" value={Number(sniperConfig.settings.min_price)} onChange={(e) => setSniperConfig({ ...sniperConfig, settings: { ...sniperConfig.settings, min_price: parseFloat(e.target.value) } })} className="w-full" />
                 </div>
-                <div className="flex gap-2">
-                  {[25, 50, 75].map((pct) => (
-                    <button
-                      key={pct}
-                      onClick={() => setLocalConfig({ ...localConfig, partial_size_pct: pct })}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        localConfig.partial_size_pct === pct
-                          ? "bg-purple-500 text-white"
-                          : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
-                      }`}
-                    >
-                      {pct}%
-                    </button>
-                  ))}
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Max Price</span><span className="font-mono text-amber-500">{String(sniperConfig.settings.max_price)}c</span></div>
+                  <input type="range" min="0.9" max="0.99" step="0.01" value={Number(sniperConfig.settings.max_price)} onChange={(e) => setSniperConfig({ ...sniperConfig, settings: { ...sniperConfig.settings, max_price: parseFloat(e.target.value) } })} className="w-full" />
                 </div>
-                <p className="text-[10px] text-zinc-500 mt-1">
-                  Use reduced size when confidence is lower.
-                </p>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Min Elapsed (sec)</span><span className="font-mono text-amber-500">{String(sniperConfig.settings.min_elapsed_sec)}s</span></div>
+                  <input type="range" min="300" max="840" step="60" value={Number(sniperConfig.settings.min_elapsed_sec)} onChange={(e) => setSniperConfig({ ...sniperConfig, settings: { ...sniperConfig.settings, min_elapsed_sec: parseInt(e.target.value) } })} className="w-full" />
+                </div>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Min EV %</span><span className="font-mono text-amber-500">{String(sniperConfig.settings.min_ev_pct)}%</span></div>
+                  <input type="range" min="1" max="10" step="0.5" value={Number(sniperConfig.settings.min_ev_pct)} onChange={(e) => setSniperConfig({ ...sniperConfig, settings: { ...sniperConfig.settings, min_ev_pct: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
               </div>
             </div>
+          )}
 
-            {/* Edge Mandatory */}
-            <label className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={localConfig.edge_mandatory as boolean}
-                onChange={(e) => setLocalConfig({ ...localConfig, edge_mandatory: e.target.checked })}
-                className="rounded"
-              />
-              <div className="flex-1">
-                <span className="text-sm font-medium">Require Edge for all trades</span>
-                <p className="text-xs text-zinc-500">
-                  If enabled, edge must always be present. Other indicators alone won't trigger trades.
+          {/* DipArb Tab */}
+          {activeTab === "dip_arb" && (
+            <div className="space-y-4">
+              <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                  <strong>DipArb Strategy:</strong> Two-leg flash crash arbitrage. Buy dip, then hedge opposite when leg1_price + opposite_ask ≤ sum_target.
                 </p>
               </div>
-            </label>
-          </div>
-
-          {/* Section 2: Indicator Toggles */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 border-b border-zinc-200 dark:border-zinc-700 pb-1">
-              Active Indicators
-            </h3>
-            <p className="text-xs text-zinc-500">
-              Enable/disable indicators. Disabled indicators won't count toward confirmations.
-            </p>
-
-            <div className="grid grid-cols-2 gap-2">
-              {INDICATORS.map((indicator) => {
-                const isEnabled = localConfig[indicator.key] as boolean;
-                const Icon = indicator.icon === "trend" ? TrendingUp : Activity;
-
-                return (
-                  <button
-                    key={indicator.key}
-                    onClick={() => handleToggle(indicator.key)}
-                    className={`flex items-start gap-2 p-2.5 rounded-lg text-left transition-all ${
-                      isEnabled
-                        ? "bg-purple-500/10 border border-purple-500/30"
-                        : "bg-zinc-100 dark:bg-zinc-800 border border-transparent"
-                    }`}
-                  >
-                    <Icon
-                      className={`w-4 h-4 mt-0.5 ${
-                        isEnabled ? "text-purple-500" : "text-zinc-400"
-                      }`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1">
-                        <span
-                          className={`text-xs font-medium truncate ${
-                            isEnabled
-                              ? "text-purple-600 dark:text-purple-400"
-                              : "text-zinc-600 dark:text-zinc-400"
-                          }`}
-                        >
-                          {indicator.name}
-                        </span>
-                        {isEnabled && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-[10px] text-zinc-500 line-clamp-2">
-                        {indicator.description}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Section 3: Threshold Settings */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 border-b border-zinc-200 dark:border-zinc-700 pb-1">
-              Indicator Thresholds
-            </h3>
-
-            {/* Edge Threshold */}
-            {localConfig.use_edge && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-purple-500" />
-                    <span className="text-sm font-medium">Edge Threshold</span>
-                    <InfoTooltip content="Minimum price gap between Binance movement and Polymarket odds to trigger a trade. Example: 5% edge means you need at least 5 percentage points of mispricing (e.g., fair value 60% but market shows 55%)." />
-                  </div>
-                  <span className="text-sm font-mono text-purple-500">
-                    {localConfig.min_edge_pct}%
-                  </span>
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
+                <input type="checkbox" checked={dipArbConfig.enabled} onChange={(e) => setDipArbConfig({ ...dipArbConfig, enabled: e.target.checked })} className="rounded" />
+                <span className="text-sm font-medium">Enable DipArb Strategy</span>
+              </label>
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Dip Threshold</span><span className="font-mono text-emerald-500">{(Number(dipArbConfig.settings.dip_threshold) * 100).toFixed(0)}%</span></div>
+                  <input type="range" min="0.05" max="0.3" step="0.01" value={Number(dipArbConfig.settings.dip_threshold)} onChange={(e) => setDipArbConfig({ ...dipArbConfig, settings: { ...dipArbConfig.settings, dip_threshold: parseFloat(e.target.value) } })} className="w-full" />
                 </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="15"
-                  step="0.5"
-                  value={localConfig.min_edge_pct || 5}
-                  onChange={(e) =>
-                    setLocalConfig({ ...localConfig, min_edge_pct: parseFloat(e.target.value) })
-                  }
-                  className="w-full"
-                />
-                <p className="text-[10px] text-zinc-500">
-                  Lower = more trades, higher = safer trades
-                </p>
-              </div>
-            )}
-
-            {/* Volume Delta Threshold */}
-            {localConfig.use_volume_delta && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-blue-500" />
-                    <span className="text-sm font-medium">Volume Delta</span>
-                  </div>
-                  <span className="text-sm font-mono text-blue-500">
-                    ${((localConfig.min_volume_delta_usd || 10000) / 1000).toFixed(0)}K
-                  </span>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Window Minutes</span><span className="font-mono text-emerald-500">{String(dipArbConfig.settings.window_minutes)}m</span></div>
+                  <input type="range" min="1" max="10" step="1" value={Number(dipArbConfig.settings.window_minutes)} onChange={(e) => setDipArbConfig({ ...dipArbConfig, settings: { ...dipArbConfig.settings, window_minutes: parseInt(e.target.value) } })} className="w-full" />
                 </div>
-                <input
-                  type="range"
-                  min="1000"
-                  max="50000"
-                  step="1000"
-                  value={localConfig.min_volume_delta_usd || 10000}
-                  onChange={(e) =>
-                    setLocalConfig({ ...localConfig, min_volume_delta_usd: parseInt(e.target.value) })
-                  }
-                  className="w-full"
-                />
-                <p className="text-[10px] text-zinc-500">
-                  Minimum net directional volume in USD
-                </p>
-              </div>
-            )}
-
-            {/* Orderbook Imbalance */}
-            {localConfig.use_orderbook && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-green-500" />
-                    <span className="text-sm font-medium">Orderbook Imbalance</span>
-                  </div>
-                  <span className="text-sm font-mono text-green-500">
-                    {((localConfig.min_orderbook_imbalance || 0.1) * 100).toFixed(0)}%
-                  </span>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Sum Target</span><span className="font-mono text-emerald-500">{String(dipArbConfig.settings.sum_target)}</span></div>
+                  <input type="range" min="0.8" max="1.0" step="0.01" value={Number(dipArbConfig.settings.sum_target)} onChange={(e) => setDipArbConfig({ ...dipArbConfig, settings: { ...dipArbConfig.settings, sum_target: parseFloat(e.target.value) } })} className="w-full" />
                 </div>
-                <input
-                  type="range"
-                  min="0.05"
-                  max="0.5"
-                  step="0.05"
-                  value={localConfig.min_orderbook_imbalance || 0.1}
-                  onChange={(e) =>
-                    setLocalConfig({ ...localConfig, min_orderbook_imbalance: parseFloat(e.target.value) })
-                  }
-                  className="w-full"
-                />
-                <p className="text-[10px] text-zinc-500">
-                  Bid/ask ratio difference required
-                </p>
-              </div>
-            )}
-
-            {/* RSI Thresholds */}
-            {localConfig.use_rsi && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-orange-500" />
-                  <span className="text-sm font-medium">RSI Levels</span>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-green-500">Oversold</span>
-                      <span className="font-mono">{localConfig.rsi_oversold}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="10"
-                      max="40"
-                      step="5"
-                      value={localConfig.rsi_oversold || 30}
-                      onChange={(e) =>
-                        setLocalConfig({ ...localConfig, rsi_oversold: parseInt(e.target.value) })
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-red-500">Overbought</span>
-                      <span className="font-mono">{localConfig.rsi_overbought}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="60"
-                      max="90"
-                      step="5"
-                      value={localConfig.rsi_overbought || 70}
-                      onChange={(e) =>
-                        setLocalConfig({ ...localConfig, rsi_overbought: parseInt(e.target.value) })
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-                <p className="text-[10px] text-zinc-500">
-                  RSI &lt; oversold = bullish, RSI &gt; overbought = bearish
-                </p>
-              </div>
-            )}
-
-            {/* ADX Threshold */}
-            {localConfig.use_adx && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-cyan-500" />
-                    <span className="text-sm font-medium">ADX Trend Strength</span>
-                  </div>
-                  <span className="text-sm font-mono text-cyan-500">
-                    {localConfig.adx_trend_threshold}
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="15"
-                  max="40"
-                  step="5"
-                  value={localConfig.adx_trend_threshold || 25}
-                  onChange={(e) =>
-                    setLocalConfig({ ...localConfig, adx_trend_threshold: parseInt(e.target.value) })
-                  }
-                  className="w-full"
-                />
-                <p className="text-[10px] text-zinc-500">
-                  ADX above threshold = strong trend detected
-                </p>
-              </div>
-            )}
-
-            {/* Supertrend Multiplier */}
-            {localConfig.use_supertrend && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-pink-500" />
-                    <span className="text-sm font-medium">Supertrend ATR Multiplier</span>
-                  </div>
-                  <span className="text-sm font-mono text-pink-500">
-                    {localConfig.supertrend_multiplier}x
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="5"
-                  step="0.5"
-                  value={localConfig.supertrend_multiplier || 3}
-                  onChange={(e) =>
-                    setLocalConfig({ ...localConfig, supertrend_multiplier: parseFloat(e.target.value) })
-                  }
-                  className="w-full"
-                />
-                <p className="text-[10px] text-zinc-500">
-                  Higher = less sensitive, fewer signals
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Current Configuration Summary */}
-          <div className="p-3 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
-            <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-2">
-              Current Configuration
-            </h4>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Active indicators:</span>
-                <span className="font-mono text-purple-500">{enabledCount}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Min confirmations:</span>
-                <span className="font-mono text-purple-500">{localConfig.min_confirmations}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Partial position:</span>
-                <span className="font-mono text-purple-500">{localConfig.partial_size_pct}%</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Edge mandatory:</span>
-                <span className={`font-mono ${localConfig.edge_mandatory ? "text-green-500" : "text-zinc-500"}`}>
-                  {localConfig.edge_mandatory ? "Yes" : "No"}
-                </span>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Live Trading Tools - Only shown when in live mode */}
-          {isLiveMode && (onTestOrder || onSetAllowances) && (
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-red-600 dark:text-red-400 border-b border-red-200 dark:border-red-800 pb-1 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />
-                Live Trading Tools
-              </h3>
+          {/* LatencyArb Tab */}
+          {activeTab === "latency_arb" && (
+            <div className="space-y-4">
+              <div className="p-3 bg-cyan-500/10 rounded-lg border border-cyan-500/20">
+                <p className="text-xs text-cyan-600 dark:text-cyan-400">
+                  <strong>LatencyArb Strategy:</strong> Exploit 30-second Binance→Polymarket lag. Buy when Binance moves, take profit at 6%.
+                </p>
+              </div>
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
+                <input type="checkbox" checked={latencyArbConfig.enabled} onChange={(e) => setLatencyArbConfig({ ...latencyArbConfig, enabled: e.target.checked })} className="rounded" />
+                <span className="text-sm font-medium">Enable LatencyArb Strategy</span>
+              </label>
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Min Binance Move %</span><span className="font-mono text-cyan-500">{String(latencyArbConfig.settings.min_move_pct)}%</span></div>
+                  <input type="range" min="0.1" max="1.0" step="0.1" value={Number(latencyArbConfig.settings.min_move_pct)} onChange={(e) => setLatencyArbConfig({ ...latencyArbConfig, settings: { ...latencyArbConfig.settings, min_move_pct: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Take Profit %</span><span className="font-mono text-cyan-500">{String(latencyArbConfig.settings.take_profit_pct)}%</span></div>
+                  <input type="range" min="2" max="15" step="0.5" value={Number(latencyArbConfig.settings.take_profit_pct)} onChange={(e) => setLatencyArbConfig({ ...latencyArbConfig, settings: { ...latencyArbConfig.settings, take_profit_pct: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Max Entry Price</span><span className="font-mono text-cyan-500">{(Number(latencyArbConfig.settings.max_entry_price) * 100).toFixed(0)}c</span></div>
+                  <input type="range" min="0.5" max="0.8" step="0.05" value={Number(latencyArbConfig.settings.max_entry_price)} onChange={(e) => setLatencyArbConfig({ ...latencyArbConfig, settings: { ...latencyArbConfig.settings, max_entry_price: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
+              </div>
+            </div>
+          )}
 
+          {/* CopyTrading Tab */}
+          {activeTab === "copy_trading" && (
+            <div className="space-y-4">
+              <div className="p-3 bg-pink-500/10 rounded-lg border border-pink-500/20">
+                <p className="text-xs text-pink-600 dark:text-pink-400">
+                  <strong>Copy Trading:</strong> Follow successful traders' positions with configurable position scaling.
+                </p>
+              </div>
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
+                <input type="checkbox" checked={copyTradingConfig.enabled} onChange={(e) => setCopyTradingConfig({ ...copyTradingConfig, enabled: e.target.checked })} className="rounded" />
+                <span className="text-sm font-medium">Enable Copy Trading</span>
+              </label>
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Position Multiplier</span><span className="font-mono text-pink-500">{String(copyTradingConfig.settings.position_multiplier)}x</span></div>
+                  <input type="range" min="0.1" max="2.0" step="0.1" value={Number(copyTradingConfig.settings.position_multiplier)} onChange={(e) => setCopyTradingConfig({ ...copyTradingConfig, settings: { ...copyTradingConfig.settings, position_multiplier: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Max Position USD</span><span className="font-mono text-pink-500">${String(copyTradingConfig.settings.max_position_usd)}</span></div>
+                  <input type="range" min="10" max="500" step="10" value={Number(copyTradingConfig.settings.max_position_usd)} onChange={(e) => setCopyTradingConfig({ ...copyTradingConfig, settings: { ...copyTradingConfig.settings, max_position_usd: parseInt(e.target.value) } })} className="w-full" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* LatencyGap Tab */}
+          {activeTab === "latency_gap" && (
+            <div className="space-y-4">
+              <div className="p-3 bg-purple-500/10 rounded-lg border border-purple-500/20">
+                <p className="text-xs text-purple-600 dark:text-purple-400">
+                  <strong>Latency Gap:</strong> Trade based on Binance price leading Polymarket odds. Checkpoint-based entries.
+                </p>
+              </div>
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
+                <input type="checkbox" checked={latencyGapConfig.enabled} onChange={(e) => setLatencyGapConfig({ ...latencyGapConfig, enabled: e.target.checked })} className="rounded" />
+                <span className="text-sm font-medium">Enable Latency Gap Strategy</span>
+              </label>
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Min Edge %</span><span className="font-mono text-purple-500">{String(latencyGapConfig.settings.min_edge_pct)}%</span></div>
+                  <input type="range" min="1" max="15" step="0.5" value={Number(latencyGapConfig.settings.min_edge_pct)} onChange={(e) => setLatencyGapConfig({ ...latencyGapConfig, settings: { ...latencyGapConfig.settings, min_edge_pct: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
+                <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2"><span>Min Confidence</span><span className="font-mono text-purple-500">{(Number(latencyGapConfig.settings.min_confidence) * 100).toFixed(0)}%</span></div>
+                  <input type="range" min="0.3" max="0.9" step="0.05" value={Number(latencyGapConfig.settings.min_confidence)} onChange={(e) => setLatencyGapConfig({ ...latencyGapConfig, settings: { ...latencyGapConfig.settings, min_confidence: parseFloat(e.target.value) } })} className="w-full" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Live Tools Tab */}
+          {activeTab === "live_tools" && isLiveMode && (
+            <div className="space-y-4">
               <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/20">
                 <p className="text-xs text-red-600 dark:text-red-400">
                   <strong>WARNING:</strong> These controls execute real trades with real money.
-                  Use with extreme caution.
                 </p>
               </div>
 
-              {/* Set Token Allowances */}
+              {/* Allowances */}
               {onSetAllowances && (
                 <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Token Allowances</span>
-                    <InfoTooltip content="One-time setup: Approves USDC and conditional tokens for Polymarket exchange contracts. Required before your first trade. Costs a small amount of MATIC for gas." />
-                  </div>
-                  <button
-                    onClick={handleSetAllowances}
-                    disabled={allowancesLoading || !apiKey}
-                    className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {allowancesLoading ? "Setting Allowances..." : "🔓 Set Token Allowances (One-Time)"}
+                  <span className="text-sm font-medium">Token Allowances</span>
+                  <button onClick={handleSetAllowances} disabled={allowancesLoading || !apiKey} className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50">
+                    {allowancesLoading ? "Setting..." : "Set Token Allowances"}
                   </button>
-                  <p className="text-[10px] text-zinc-500">
-                    Required once per wallet before first trade.
-                  </p>
-                  {allowancesResult && (
-                    <div className={`p-2 rounded text-sm ${
-                      allowancesResult.success
-                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                    }`}>
-                      {allowancesResult.success
-                        ? "✓ Allowances set successfully!"
-                        : `✗ ${allowancesResult.error || "Failed to set allowances"}`
-                      }
-                    </div>
-                  )}
+                  {allowancesResult && <div className={`p-2 rounded text-sm ${allowancesResult.success ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{allowancesResult.success ? "Success!" : allowancesResult.error}</div>}
                 </div>
               )}
 
-              {/* Manual Test Order */}
+              {/* Test Order */}
               {onTestOrder && (
                 <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Manual Test Order</span>
-                    <InfoTooltip content="Place a small test order to verify your live trading setup is working. Limited to $1-$100 for safety." />
+                  <span className="text-sm font-medium">Manual Test Order</span>
+                  <div className="flex gap-2">
+                    {(["BTC", "ETH", "SOL"] as const).map((s) => (
+                      <button key={s} onClick={() => setTestSymbol(s)} className={`flex-1 py-1.5 text-sm rounded ${testSymbol === s ? "bg-amber-500 text-white" : "bg-zinc-200 dark:bg-zinc-700"}`}>{s}</button>
+                    ))}
                   </div>
-
-                  {/* Symbol Selection */}
-                  <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Symbol</label>
-                    <div className="flex gap-2">
-                      {(["BTC", "ETH", "SOL"] as const).map((sym) => (
-                        <button
-                          key={sym}
-                          onClick={() => setTestSymbol(sym)}
-                          className={`flex-1 px-3 py-1.5 text-sm rounded transition-colors ${
-                            testSymbol === sym
-                              ? "bg-amber-500 text-white"
-                              : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
-                          }`}
-                        >
-                          {sym}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setTestSide("UP")} className={`flex-1 py-1.5 text-sm rounded ${testSide === "UP" ? "bg-green-500 text-white" : "bg-zinc-200 dark:bg-zinc-700"}`}>▲ UP</button>
+                    <button onClick={() => setTestSide("DOWN")} className={`flex-1 py-1.5 text-sm rounded ${testSide === "DOWN" ? "bg-red-500 text-white" : "bg-zinc-200 dark:bg-zinc-700"}`}>▼ DOWN</button>
                   </div>
-
-                  {/* Side Selection */}
-                  <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Side</label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setTestSide("UP")}
-                        className={`flex-1 px-3 py-1.5 text-sm rounded transition-colors ${
-                          testSide === "UP"
-                            ? "bg-green-500 text-white"
-                            : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
-                        }`}
-                      >
-                        ▲ UP
-                      </button>
-                      <button
-                        onClick={() => setTestSide("DOWN")}
-                        className={`flex-1 px-3 py-1.5 text-sm rounded transition-colors ${
-                          testSide === "DOWN"
-                            ? "bg-red-500 text-white"
-                            : "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600"
-                        }`}
-                      >
-                        ▼ DOWN
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Amount */}
-                  <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Amount (USD)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      step="1"
-                      value={testAmount}
-                      onChange={(e) => setTestAmount(Math.min(100, Math.max(1, parseInt(e.target.value) || 1)))}
-                      className="w-full px-3 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded text-sm font-mono"
-                    />
-                    <div className="text-[10px] text-zinc-400 mt-1">Min: $1, Max: $100</div>
-                  </div>
-
-                  {/* Submit Button */}
-                  <button
-                    onClick={handleTestOrder}
-                    disabled={testOrderLoading || !apiKey}
-                    className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {testOrderLoading ? "Placing Order..." : `Place ${testSide} Order for $${testAmount}`}
+                  <input type="number" min="1" max="100" value={testAmount} onChange={(e) => setTestAmount(Math.min(100, Math.max(1, parseInt(e.target.value) || 1)))} className="w-full px-3 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded text-sm" />
+                  <button onClick={handleTestOrder} disabled={testOrderLoading || !apiKey} className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50">
+                    {testOrderLoading ? "Placing..." : `Place ${testSide} $${testAmount}`}
                   </button>
-
-                  {!apiKey && (
-                    <div className="text-xs text-amber-600 dark:text-amber-400">
-                      API key required. Switch to live mode from the trading card first.
-                    </div>
-                  )}
-
-                  {/* Result */}
-                  {testOrderResult && (
-                    <div className={`p-2 rounded text-sm ${
-                      testOrderResult.success
-                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                    }`}>
-                      {testOrderResult.success
-                        ? "✓ Order placed successfully!"
-                        : `✗ ${testOrderResult.error || "Failed to place order"}`
-                      }
-                    </div>
-                  )}
+                  {testOrderResult && <div className={`p-2 rounded text-sm ${testOrderResult.success ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{testOrderResult.success ? "Order placed!" : testOrderResult.error}</div>}
                 </div>
               )}
             </div>
@@ -730,19 +386,16 @@ export function StrategySettingsModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-zinc-200 dark:border-zinc-700">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-700 text-sm font-medium hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-4 py-2 rounded bg-purple-500 text-white text-sm font-medium hover:bg-purple-600 transition-colors"
-          >
-            Save Changes
-          </button>
+        <div className="flex items-center justify-between p-4 border-t border-zinc-200 dark:border-zinc-700">
+          <div className="text-xs text-zinc-500">
+            Active: {[sniperConfig.enabled && "Sniper", dipArbConfig.enabled && "DipArb", latencyArbConfig.enabled && "LatencyArb", copyTradingConfig.enabled && "CopyTrade", latencyGapConfig.enabled && "LatencyGap"].filter(Boolean).join(", ") || "None"}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-700 text-sm font-medium hover:bg-zinc-300 dark:hover:bg-zinc-600">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="px-4 py-2 rounded bg-purple-500 text-white text-sm font-medium hover:bg-purple-600 disabled:opacity-50">
+              {saving ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

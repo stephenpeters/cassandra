@@ -768,6 +768,7 @@ class Market15Min:
     is_active: bool
     up_token_id: str = ""  # Explicit UP token ID
     down_token_id: str = ""  # DOWN token ID
+    target_price: float = 0.0  # Chainlink reference price (price to beat)
 
     def to_dict(self) -> dict:
         return {
@@ -783,6 +784,7 @@ class Market15Min:
             "price": self.price,
             "volume": self.volume,
             "is_active": self.is_active,
+            "target_price": self.target_price,
         }
 
 
@@ -818,6 +820,59 @@ class MarketTrade:
         }
 
 
+def scrape_polymarket_target_price(symbol: str, market_start: int) -> float | None:
+    """
+    Scrape the target price (price to beat) from Polymarket for a 15-min market.
+
+    The target price is the Chainlink reference price at market start.
+    It appears on the PM page as the closePrice of the previous market window.
+
+    Args:
+        symbol: Crypto symbol (BTC, ETH, etc.)
+        market_start: Unix timestamp of market start
+
+    Returns:
+        Target price in USD, or None if not found
+    """
+    import requests
+    import re
+
+    slug = f"{symbol.lower()}-updown-15m-{market_start}"
+    url = f"https://polymarket.com/event/{slug}"
+
+    try:
+        resp = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; CassandraBot/1.0)"
+        })
+        if resp.status_code != 200:
+            return None
+
+        content = resp.text
+
+        # Look for closePrice in the page data - this is the target price for current market
+        # The closePrice of the MOST RECENT previous market = openPrice of current market
+        # Pattern: {"openPrice":XXX,"closePrice":YYY}
+        # Get ALL matches, filter empty ones, take the LAST valid one
+        matches = re.findall(r'"closePrice":([0-9.]+)', content)
+        # Filter to only valid prices (non-empty, reasonable range for crypto)
+        valid_prices = [float(m) for m in matches if m and float(m) > 0]
+        if valid_prices:
+            return valid_prices[-1]  # Last valid closePrice
+
+        # Fallback: look for any price around expected BTC range
+        if symbol.upper() == "BTC":
+            matches = re.findall(r'([89][0-9]{4}\.[0-9]+)', content)
+            if matches:
+                # Return the most recent/highest one
+                prices = [float(m) for m in matches]
+                return max(prices)
+
+    except Exception as e:
+        print(f"[PM-Scrape] Error scraping target price for {symbol}: {e}")
+
+    return None
+
+
 class Polymarket15MinFeed:
     """
     Tracks active Polymarket 15-minute crypto markets and their trades.
@@ -837,6 +892,7 @@ class Polymarket15MinFeed:
         self.market_trades: deque[MarketTrade] = deque(maxlen=500)
         self.last_trade_ids: dict[str, str] = {}  # condition_id -> last trade id
         self._last_window: int = 0  # Track last fetched window to avoid duplicate fetches
+        self._target_price_cache: dict[str, float] = {}  # "SYMBOL_market_start" -> target price
 
         # Callbacks
         self.on_market_update: Optional[Callable[[Market15Min], None]] = None
@@ -969,6 +1025,25 @@ class Polymarket15MinFeed:
                 up_token_id = ""
                 down_token_id = ""
 
+            # Get target price from cache or scrape from Polymarket
+            cache_key = f"{symbol}_{start_ts}"
+            target_price = self._target_price_cache.get(cache_key, 0.0)
+
+            # Only scrape if we don't have a cached target price and market is active
+            if target_price == 0.0 and is_active:
+                # Scrape target price from Polymarket (run in thread to avoid blocking)
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(scrape_polymarket_target_price, symbol, start_ts)
+                    try:
+                        scraped_price = future.result(timeout=5)
+                        if scraped_price:
+                            target_price = scraped_price
+                            self._target_price_cache[cache_key] = target_price
+                            print(f"[PM-Scrape] {symbol} target price: ${target_price:,.2f}")
+                    except Exception as e:
+                        print(f"[PM-Scrape] Failed to get target price for {symbol}: {e}")
+
             mkt = Market15Min(
                 condition_id=condition_id,
                 token_id=up_token_id,  # Legacy field
@@ -982,6 +1057,7 @@ class Polymarket15MinFeed:
                 is_active=is_active,
                 up_token_id=up_token_id,
                 down_token_id=down_token_id,
+                target_price=target_price,
             )
 
             # Only update if this is for the current window

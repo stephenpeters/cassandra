@@ -1,0 +1,121 @@
+{
+  "strategies": {
+    "latency_gap": {
+      "enabled": false,
+      "description": "Trade based on Binance price leading Polymarket odds",
+      "markets": [
+        "BTC",
+        "ETH"
+      ],
+      "settings": {
+        "min_edge_pct": 5,
+        "checkpoints": [
+          "7m30s",
+          "9m"
+        ],
+        "min_confidence": 0.6,
+        "position_size_pct": 5
+      },
+      "traders": []
+    },
+    "copy_trading": {
+      "enabled": false,
+      "description": "Copy trades from successful traders",
+      "markets": [
+        "BTC"
+      ],
+      "settings": {
+        "scale_to_account": true,
+        "reference_balance": 10000,
+        "position_multiplier": 0.5,
+        "max_position_usd": 100
+      },
+      "traders": [
+        {
+          "name": "gabagool22",
+          "address": "0x8758FE5b2e8cdCc4dE988E91D9F215E1A6d0f5E2",
+          "enabled": true,
+          "min_trade_size": 1000,
+          "trust_score": 0.85
+        },
+        {
+          "name": "Account88888",
+          "address": "0x5dE4f85A6F5D7Cae99c46ea2bD81Aa4E7D4C3AC1",
+          "enabled": true,
+          "min_trade_size": 500,
+          "trust_score": 0.75
+        }
+      ]
+    },
+    "sniper": {
+      "enabled": true,
+      "description": "Buy high-probability outcomes late in 15-min window (75c-98c after 10min, EV>3%)",
+      "markets": [
+        "BTC",
+        "ETH"
+      ],
+      "settings": {
+        "min_price": 0.75,
+        "max_price": 0.98,
+        "min_elapsed_sec": 600,
+        "position_size_pct": 2,
+        "max_position_usd": 100,
+        "fee_rate": 0.02,
+        "min_ev_pct": 3,
+        "assumed_win_rate": 0.9
+      },
+      "traders": []
+    },
+    "dip_arb": {
+      "enabled": false,
+      "description": "Two-leg flash crash arbitrage: buy dip, then hedge opposite for guaranteed profit",
+      "markets": [
+        "BTC"
+      ],
+      "settings": {
+        "dip_threshold": 0.15,
+        "surge_threshold": 0.15,
+        "sliding_window_sec": 3,
+        "sum_target": 0.95,
+        "window_minutes": 2,
+        "enable_surge": true,
+        "min_profit_rate": 0.05,
+        "position_size_pct": 2,
+        "max_position_usd": 100,
+        "shares_per_leg": 10
+      },
+      "traders": []
+    },
+    "latency_arb": {
+      "enabled": false,
+      "description": "Exploit Binance\u2192Polymarket lag: buy when price already moved (CRYINGLITTLEBABY style)",
+      "markets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "settings": {
+        "min_move_pct": 0.3,
+        "take_profit_pct": 6,
+        "max_entry_price": 0.65,
+        "min_time_remaining_sec": 300,
+        "hold_if_confirmed": true,
+        "confirmed_threshold": 0.9,
+        "position_size_pct": 2,
+        "max_position_usd": 100,
+        "slippage_buffer_pct": 1.5,
+        "cooldown_sec": 30
+      },
+      "traders": []
+    }
+  },
+  "global_settings": {
+    "enabled_markets": [
+      "BTC",
+      "ETH",
+      "SOL"
+    ],
+    "max_concurrent_positions": 3,
+    "max_daily_trades": 20
+  }
+}

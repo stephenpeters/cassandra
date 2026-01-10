@@ -103,6 +103,860 @@ class TradingConfig:
 
 
 # ============================================================================
+# SNIPER STRATEGY CONFIGURATION
+# ============================================================================
+
+@dataclass
+class SniperConfig:
+    """
+    Sniper Strategy: Buy high-probability outcomes late in the 15-min window.
+
+    Entry Signal:
+        IF: UP price >= min_price OR DOWN price >= min_price
+        AND: UP price <= max_price AND DOWN price <= max_price (avoid -EV)
+        AND: elapsed_seconds >= min_elapsed_sec
+        THEN: Buy the leading side
+
+    Backtest Results (75c+ after 10min):
+        - Win rate: 100% (2/2 trades)
+        - P&L: +$44 per $100 wagered
+
+    EV Calculation:
+        At 75c entry with 90% true prob: EV = +19.4%
+        At 98c entry with 99% true prob: EV = -1% to +1% (fees eat profit)
+        => Don't buy above 98c as EV becomes negative
+    """
+    enabled: bool = True
+    min_price: float = 0.75  # Minimum probability to enter (75c)
+    max_price: float = 0.98  # Maximum price - don't buy above this (EV negative)
+    min_elapsed_sec: int = 600  # Minimum seconds into window (10 minutes)
+    markets: list = field(default_factory=lambda: ["BTC"])  # Focus on BTC for paper trading
+    position_size_pct: float = 2.0  # % of account per trade
+    max_position_usd: float = 100.0  # Hard cap per position
+    fee_rate: float = 0.02  # Estimated fee + slippage (2%)
+    min_ev_pct: float = 3.0  # Minimum EV% required to trade
+    assumed_win_rate: float = 0.90  # Assumed win rate for EV calc (late entry = high confidence)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SniperConfig":
+        return cls(**data)
+
+
+class SniperStrategy:
+    """
+    Sniper Strategy implementation.
+
+    Buys the high-probability side (>=min_price) after min_elapsed_sec into the window.
+    PM-only conditions - no Binance confirmation required.
+    """
+
+    def __init__(self, config: Optional[SniperConfig] = None):
+        self.config = config or SniperConfig()
+        self._positions_taken: set[str] = set()  # "SYMBOL_market_start" keys
+
+    def check_signal(
+        self,
+        symbol: str,
+        up_price: float,
+        down_price: float,
+        elapsed_sec: int,
+        market_start: int
+    ) -> Optional[tuple[str, dict]]:
+        """
+        Check if sniper entry conditions are met.
+
+        Returns:
+            Tuple of ("UP" or "DOWN", ev_info dict) or None
+        """
+        # Log every call for debugging
+        print(f"[Sniper] check_signal called: {symbol} | UP={up_price:.1%} DOWN={down_price:.1%} | "
+              f"elapsed={elapsed_sec}s | market_start={market_start}", flush=True)
+
+        if not self.config.enabled:
+            print(f"[Sniper] {symbol}: SKIP - strategy disabled", flush=True)
+            return None
+
+        if symbol not in self.config.markets:
+            print(f"[Sniper] {symbol}: SKIP - not in markets {self.config.markets}", flush=True)
+            return None
+
+        if elapsed_sec < self.config.min_elapsed_sec:
+            remaining_wait = self.config.min_elapsed_sec - elapsed_sec
+            print(f"[Sniper] {symbol}: WAIT - need {remaining_wait}s more (elapsed={elapsed_sec}s, min={self.config.min_elapsed_sec}s)", flush=True)
+            return None
+
+        # Check if we already took a position for this market window
+        position_key = f"{symbol}_{market_start}"
+        if position_key in self._positions_taken:
+            print(f"[Sniper] {symbol}: SKIP - already have position for this window", flush=True)
+            return None
+
+        # Check if either side meets the price range and EV threshold
+        for side, price in [("UP", up_price), ("DOWN", down_price)]:
+            if price >= self.config.min_price and price <= self.config.max_price:
+                # Calculate EV for this entry
+                ev_info = self.calculate_ev(price, self.config.assumed_win_rate)
+                if ev_info["ev_pct"] >= self.config.min_ev_pct:
+                    print(f"[Sniper] {symbol}: SIGNAL {side} @ {price:.1%} | EV={ev_info['ev_pct']:+.1f}%", flush=True)
+                    return (side, ev_info)
+                else:
+                    print(f"[Sniper] {symbol}: {side} @ {price:.1%} - EV too low ({ev_info['ev_pct']:+.1f}% < {self.config.min_ev_pct}%)", flush=True)
+            elif price < self.config.min_price:
+                print(f"[Sniper] {symbol}: {side} @ {price:.1%} - below min_price ({self.config.min_price:.1%})", flush=True)
+            elif price > self.config.max_price:
+                print(f"[Sniper] {symbol}: {side} @ {price:.1%} - above max_price ({self.config.max_price:.1%})", flush=True)
+
+        print(f"[Sniper] {symbol}: NO SIGNAL - no side meets criteria", flush=True)
+        return None
+
+    def get_status(
+        self,
+        symbol: str,
+        up_price: float,
+        down_price: float,
+        elapsed_sec: int,
+        market_start: int
+    ) -> dict:
+        """
+        Get current evaluation status for display (no logging).
+
+        Returns:
+            dict with status, reason, and details
+        """
+        if not self.config.enabled:
+            return {"status": "disabled", "reason": "Strategy disabled", "symbol": symbol}
+
+        if symbol not in self.config.markets:
+            return {"status": "skip", "reason": f"Not in markets {self.config.markets}", "symbol": symbol}
+
+        if elapsed_sec < self.config.min_elapsed_sec:
+            remaining_wait = self.config.min_elapsed_sec - elapsed_sec
+            return {
+                "status": "waiting",
+                "reason": f"Waiting {remaining_wait}s more",
+                "symbol": symbol,
+                "elapsed_sec": elapsed_sec,
+                "min_elapsed_sec": self.config.min_elapsed_sec,
+                "time_remaining": remaining_wait,
+            }
+
+        position_key = f"{symbol}_{market_start}"
+        if position_key in self._positions_taken:
+            return {"status": "position_taken", "reason": "Already have position", "symbol": symbol}
+
+        # Evaluate both sides
+        evaluations = []
+        for side, price in [("UP", up_price), ("DOWN", down_price)]:
+            ev_info = self.calculate_ev(price, self.config.assumed_win_rate)
+            eval_data = {
+                "side": side,
+                "price": price,
+                "ev_pct": ev_info["ev_pct"],
+                "in_range": self.config.min_price <= price <= self.config.max_price,
+                "ev_ok": ev_info["ev_pct"] >= self.config.min_ev_pct,
+            }
+            evaluations.append(eval_data)
+
+            # Check if this would trigger
+            if eval_data["in_range"] and eval_data["ev_ok"]:
+                return {
+                    "status": "ready",
+                    "reason": f"Would signal {side}",
+                    "symbol": symbol,
+                    "signal": side,
+                    "entry_price": price,
+                    "ev_pct": ev_info["ev_pct"],
+                    "elapsed_sec": elapsed_sec,
+                }
+
+        # No signal - explain why
+        best_eval = max(evaluations, key=lambda e: e["ev_pct"])
+        if not best_eval["in_range"]:
+            if best_eval["price"] < self.config.min_price:
+                reason = f"Best price {best_eval['price']:.1%} < min {self.config.min_price:.1%}"
+            else:
+                reason = f"Best price {best_eval['price']:.1%} > max {self.config.max_price:.1%}"
+        else:
+            reason = f"EV {best_eval['ev_pct']:+.1f}% < min {self.config.min_ev_pct}%"
+
+        return {
+            "status": "no_signal",
+            "reason": reason,
+            "symbol": symbol,
+            "elapsed_sec": elapsed_sec,
+            "evaluations": evaluations,
+        }
+
+    def record_position(self, symbol: str, market_start: int):
+        """Record that we took a position for this market window"""
+        position_key = f"{symbol}_{market_start}"
+        self._positions_taken.add(position_key)
+
+    def cleanup_old_positions(self, current_time: int):
+        """Remove old position keys (markets that have ended)"""
+        # Keep positions from last 30 minutes
+        cutoff = current_time - 1800
+        self._positions_taken = {
+            k for k in self._positions_taken
+            if int(k.split("_")[1]) > cutoff
+        }
+
+    def get_position_size(self, account_balance: float) -> float:
+        """Calculate position size based on config"""
+        pct_based = account_balance * (self.config.position_size_pct / 100.0)
+        return min(pct_based, self.config.max_position_usd)
+
+    def validate_retry(
+        self,
+        side: str,
+        current_price: float,
+        elapsed_sec: int,
+        original_price: float,
+        max_price_move_pct: float = 5.0
+    ) -> tuple[bool, str, Optional[dict]]:
+        """
+        Validate if a retry is still valid after an order failure.
+
+        Args:
+            side: "UP" or "DOWN" - the original signal side
+            current_price: Current market price for that side
+            elapsed_sec: Current elapsed seconds in the window
+            original_price: Price when original signal was generated
+            max_price_move_pct: Max acceptable price move for retry (default 5%)
+
+        Returns:
+            Tuple of (is_valid, reason, ev_info_if_valid)
+        """
+        # Check if strategy is still enabled
+        if not self.config.enabled:
+            return (False, "Strategy disabled", None)
+
+        # Check if we've run out of time (within 30 seconds of market end)
+        remaining = 900 - elapsed_sec
+        if remaining < 30:
+            return (False, f"Only {remaining}s remaining - too late", None)
+
+        # Check if price is still in valid range
+        if current_price < self.config.min_price:
+            return (False, f"Price dropped below min ({current_price:.1%} < {self.config.min_price:.1%})", None)
+
+        if current_price > self.config.max_price:
+            return (False, f"Price exceeded max ({current_price:.1%} > {self.config.max_price:.1%})", None)
+
+        # Check price hasn't moved too much from original signal
+        price_move = abs(current_price - original_price) / original_price * 100
+        if price_move > max_price_move_pct:
+            return (False, f"Price moved {price_move:.1f}% from original - signal stale", None)
+
+        # Check EV is still valid
+        ev_info = self.calculate_ev(current_price, self.config.assumed_win_rate)
+        if ev_info["ev_pct"] < self.config.min_ev_pct:
+            return (False, f"EV dropped below min ({ev_info['ev_pct']:.1f}% < {self.config.min_ev_pct}%)", None)
+
+        return (True, "Signal still valid", ev_info)
+
+    def calculate_ev(
+        self,
+        entry_price: float,
+        assumed_win_rate: Optional[float] = None
+    ) -> dict:
+        """
+        Calculate expected value as a percentage.
+
+        Args:
+            entry_price: Price paid (e.g., 0.75 for 75c)
+            assumed_win_rate: Override win rate estimate (default: use entry_price)
+
+        Returns:
+            dict with:
+                - ev_pct: EV as percentage of investment
+                - net_win: Profit per $1 if correct (after fees)
+                - loss: Loss per $1 if incorrect
+                - breakeven_win_rate: Win rate needed to break even
+        """
+        # Use entry price as win rate estimate if not provided
+        # (assumes market is reasonably efficient)
+        win_rate = assumed_win_rate if assumed_win_rate is not None else entry_price
+
+        # Calculate outcomes
+        # If win: get $1, profit = 1 - entry_price, fee = profit * fee_rate
+        profit = 1.0 - entry_price
+        fee = profit * self.config.fee_rate
+        net_win = profit - fee  # Net profit if correct
+
+        # If lose: lose entry_price
+        loss = entry_price
+
+        # Expected value
+        ev = win_rate * net_win - (1 - win_rate) * loss
+
+        # EV as percentage of investment
+        ev_pct = (ev / entry_price) * 100.0 if entry_price > 0 else 0.0
+
+        # Breakeven win rate: solve for win_rate where EV = 0
+        # win_rate * net_win = (1 - win_rate) * loss
+        # win_rate * net_win + win_rate * loss = loss
+        # win_rate = loss / (net_win + loss)
+        breakeven = loss / (net_win + loss) if (net_win + loss) > 0 else 1.0
+
+        return {
+            "ev_pct": round(ev_pct, 2),
+            "net_win": round(net_win, 4),
+            "loss": round(loss, 4),
+            "breakeven_win_rate": round(breakeven * 100, 1),  # As percentage
+            "entry_price": entry_price,
+            "assumed_win_rate": round(win_rate * 100, 1),
+            "fee_rate": self.config.fee_rate * 100
+        }
+
+
+# ============================================================================
+# DIP ARBITRAGE STRATEGY CONFIGURATION
+# ============================================================================
+
+@dataclass
+class DipArbConfig:
+    """
+    Dip Arbitrage Strategy: Exploit flash crashes in 15-min crypto markets.
+
+    Strategy Flow:
+        1. Only watch during first N minutes (window_minutes, default 2)
+        2. Leg1: Buy dipped token when price drops >15% over 3 seconds
+        3. After Leg1, NEVER buy same side again - only wait for hedge
+        4. Leg2: Buy opposite when leg1_entry + opposite_ask <= sum_target
+        5. Profit: $1 payout - total cost (guaranteed if both legs fill)
+
+    Example: Buy 10 DOWN at $0.35 (Leg1), then 10 UP at $0.56 (Leg2)
+             Total cost = $0.91, payout = $1.00, profit = 9%
+
+    Key insight: Early in the cycle, market has time to dump further then stabilize.
+    Closer to end = lower probability of large corrective moves.
+    """
+    enabled: bool = True
+    dip_threshold: float = 0.15  # 15% drop triggers Leg1
+    surge_threshold: float = 0.15  # 15% surge also triggers (buy opposite)
+    sliding_window_sec: int = 3  # Detect flash move in 3 seconds
+    sum_target: float = 0.95  # Hedge when leg1_price + opposite_ask < this
+    window_minutes: int = 2  # Only trigger Leg1 in first 2 minutes
+    enable_surge: bool = True  # Also detect surges
+    markets: list = field(default_factory=lambda: ["BTC"])
+    position_size_pct: float = 2.0  # % of account per trade
+    max_position_usd: float = 100.0  # Hard cap per position
+    min_profit_rate: float = 0.05  # Minimum 5% profit to trigger Leg2
+    shares_per_leg: int = 10  # Same number of shares for both legs
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DipArbConfig":
+        return cls(**data)
+
+
+class DipArbStrategy:
+    """
+    Dip Arbitrage Strategy implementation.
+
+    Detects flash crashes/surges and executes two-leg arbitrage:
+    - Leg1: Buy the crashed/surged side
+    - Leg2: Hedge with opposite side when profitable
+    """
+
+    def __init__(self, config: Optional[DipArbConfig] = None):
+        self.config = config or DipArbConfig()
+        # Track price history for sliding window detection
+        # Format: {symbol: [(timestamp, up_price, down_price), ...]}
+        self._price_history: dict[str, list[tuple[int, float, float]]] = {}
+        # Track open prices at market start
+        # Format: {symbol_market_start: (up_open, down_open)}
+        self._open_prices: dict[str, tuple[float, float]] = {}
+        # Track Leg1 positions waiting for Leg2
+        # Format: {symbol_market_start: {"side": "UP"/"DOWN", "price": float, "timestamp": int}}
+        self._leg1_positions: dict[str, dict] = {}
+        # Completed rounds (both legs filled)
+        self._completed_rounds: set[str] = set()
+
+    def record_price(self, symbol: str, timestamp: int, up_price: float, down_price: float):
+        """Record a price point for sliding window analysis"""
+        if symbol not in self._price_history:
+            self._price_history[symbol] = []
+
+        self._price_history[symbol].append((timestamp, up_price, down_price))
+
+        # Keep only last 60 seconds of data
+        cutoff = timestamp - 60
+        self._price_history[symbol] = [
+            p for p in self._price_history[symbol] if p[0] > cutoff
+        ]
+
+    def record_open_price(self, symbol: str, market_start: int, up_price: float, down_price: float):
+        """Record opening prices for a market window"""
+        key = f"{symbol}_{market_start}"
+        if key not in self._open_prices:
+            self._open_prices[key] = (up_price, down_price)
+
+    def check_leg1_signal(
+        self,
+        symbol: str,
+        up_price: float,
+        down_price: float,
+        elapsed_sec: int,
+        market_start: int,
+        current_time: int
+    ) -> Optional[dict]:
+        """
+        Check if Leg1 entry conditions are met (flash dip/surge detected).
+
+        Returns:
+            {"side": "UP"/"DOWN", "reason": "dip"/"surge", "drop_pct": float} or None
+        """
+        if not self.config.enabled:
+            return None
+
+        if symbol not in self.config.markets:
+            return None
+
+        # Only trigger in early window
+        if elapsed_sec > self.config.window_minutes * 60:
+            return None
+
+        position_key = f"{symbol}_{market_start}"
+
+        # Skip if we already have Leg1 or completed this round
+        if position_key in self._leg1_positions:
+            return None
+        if position_key in self._completed_rounds:
+            return None
+
+        # Get open prices
+        open_prices = self._open_prices.get(position_key)
+        if not open_prices:
+            return None
+
+        up_open, down_open = open_prices
+
+        # Check for dip in UP price (could be buying opportunity)
+        if up_open > 0:
+            up_change = (up_price - up_open) / up_open
+            # UP crashed - buy UP (it will likely recover or win)
+            if up_change <= -self.config.dip_threshold:
+                return {
+                    "side": "UP",
+                    "reason": "dip",
+                    "drop_pct": abs(up_change),
+                    "current_price": up_price,
+                    "open_price": up_open,
+                }
+            # UP surged - buy DOWN (contrarian, expecting mean reversion)
+            if self.config.enable_surge and up_change >= self.config.surge_threshold:
+                return {
+                    "side": "DOWN",
+                    "reason": "surge",
+                    "drop_pct": up_change,
+                    "current_price": down_price,
+                    "open_price": down_open,
+                }
+
+        # Check for dip in DOWN price
+        if down_open > 0:
+            down_change = (down_price - down_open) / down_open
+            # DOWN crashed - buy DOWN
+            if down_change <= -self.config.dip_threshold:
+                return {
+                    "side": "DOWN",
+                    "reason": "dip",
+                    "drop_pct": abs(down_change),
+                    "current_price": down_price,
+                    "open_price": down_open,
+                }
+            # DOWN surged - buy UP (contrarian)
+            if self.config.enable_surge and down_change >= self.config.surge_threshold:
+                return {
+                    "side": "UP",
+                    "reason": "surge",
+                    "drop_pct": down_change,
+                    "current_price": up_price,
+                    "open_price": up_open,
+                }
+
+        # Also check sliding window for sudden moves
+        history = self._price_history.get(symbol, [])
+        if len(history) >= 2:
+            window_start = current_time - self.config.sliding_window_sec
+            old_prices = [p for p in history if p[0] <= window_start]
+            if old_prices:
+                old_up, old_down = old_prices[-1][1], old_prices[-1][2]
+
+                # Flash crash in UP
+                if old_up > 0:
+                    flash_up_change = (up_price - old_up) / old_up
+                    if flash_up_change <= -self.config.dip_threshold:
+                        return {
+                            "side": "UP",
+                            "reason": "flash_dip",
+                            "drop_pct": abs(flash_up_change),
+                            "current_price": up_price,
+                            "open_price": up_open,
+                        }
+
+                # Flash crash in DOWN
+                if old_down > 0:
+                    flash_down_change = (down_price - old_down) / old_down
+                    if flash_down_change <= -self.config.dip_threshold:
+                        return {
+                            "side": "DOWN",
+                            "reason": "flash_dip",
+                            "drop_pct": abs(flash_down_change),
+                            "current_price": down_price,
+                            "open_price": down_open,
+                        }
+
+        return None
+
+    def check_leg2_signal(
+        self,
+        symbol: str,
+        up_price: float,
+        down_price: float,
+        market_start: int
+    ) -> Optional[dict]:
+        """
+        Check if Leg2 hedge conditions are met.
+
+        Returns:
+            {"side": "UP"/"DOWN", "total_cost": float, "profit_rate": float} or None
+        """
+        if not self.config.enabled:
+            return None
+
+        position_key = f"{symbol}_{market_start}"
+
+        # Need Leg1 to be filled first
+        leg1 = self._leg1_positions.get(position_key)
+        if not leg1:
+            return None
+
+        if position_key in self._completed_rounds:
+            return None
+
+        # Determine hedge side (opposite of Leg1)
+        leg1_side = leg1["side"]
+        leg1_price = leg1["price"]
+        hedge_side = "DOWN" if leg1_side == "UP" else "UP"
+        hedge_price = down_price if hedge_side == "DOWN" else up_price
+
+        # Calculate total cost
+        total_cost = leg1_price + hedge_price
+
+        # Check if profitable
+        if total_cost < self.config.sum_target:
+            profit_rate = (1 - total_cost) / total_cost
+            if profit_rate >= self.config.min_profit_rate:
+                return {
+                    "side": hedge_side,
+                    "current_price": hedge_price,
+                    "leg1_side": leg1_side,
+                    "leg1_price": leg1_price,
+                    "total_cost": total_cost,
+                    "profit_rate": profit_rate,
+                }
+
+        return None
+
+    def record_leg1(self, symbol: str, market_start: int, side: str, price: float, timestamp: int):
+        """Record Leg1 execution"""
+        position_key = f"{symbol}_{market_start}"
+        self._leg1_positions[position_key] = {
+            "side": side,
+            "price": price,
+            "timestamp": timestamp,
+        }
+
+    def record_leg2(self, symbol: str, market_start: int, side: str, price: float):
+        """Record Leg2 execution (completes the round)"""
+        position_key = f"{symbol}_{market_start}"
+        self._completed_rounds.add(position_key)
+        # Remove from pending Leg1
+        if position_key in self._leg1_positions:
+            del self._leg1_positions[position_key]
+
+    def get_pending_leg1_positions(self) -> dict:
+        """Get all Leg1 positions waiting for Leg2"""
+        return self._leg1_positions.copy()
+
+    def cleanup_old_data(self, current_time: int):
+        """Remove old data (markets that have ended)"""
+        cutoff = current_time - 1800  # 30 minutes
+
+        # Clean open prices
+        self._open_prices = {
+            k: v for k, v in self._open_prices.items()
+            if int(k.split("_")[1]) > cutoff
+        }
+
+        # Clean leg1 positions
+        self._leg1_positions = {
+            k: v for k, v in self._leg1_positions.items()
+            if int(k.split("_")[1]) > cutoff
+        }
+
+        # Clean completed rounds
+        self._completed_rounds = {
+            k for k in self._completed_rounds
+            if int(k.split("_")[1]) > cutoff
+        }
+
+    def get_position_size(self, account_balance: float) -> float:
+        """Calculate position size based on config"""
+        pct_based = account_balance * (self.config.position_size_pct / 100.0)
+        return min(pct_based, self.config.max_position_usd)
+
+
+# ============================================================================
+# LATENCY ARBITRAGE STRATEGY CONFIGURATION
+# ============================================================================
+
+@dataclass
+class LatencyArbConfig:
+    """
+    Latency Arbitrage Strategy: Exploit the 30-60s lag between Binance and Polymarket.
+
+    Based on CRYINGLITTLEBABY's leaked strategy ($19.5K/day, 100% win rate):
+    - Monitor Binance price moves continuously
+    - When BTC/ETH/SOL moves >X%, Polymarket odds are stale
+    - Buy the winning side before odds adjust
+    - Take profit early OR hold if running
+
+    Strategy Flow:
+        1. Binance price drops 0.3% → BTC going DOWN is now fact
+        2. Polymarket still shows old odds (DOWN at $0.30)
+        3. Buy DOWN immediately (before others notice)
+        4. Either: take profit at 6%+ return, OR hold to expiry if confirmed winner
+
+    Key insight: Not predicting - collecting receipts for events that already occurred.
+    """
+    enabled: bool = True
+    min_move_pct: float = 0.3  # Minimum Binance move to trigger (0.3%)
+    take_profit_pct: float = 6.0  # Take profit at 6% return
+    max_entry_price: float = 0.65  # Don't buy if price > 65c (less edge)
+    min_time_remaining_sec: int = 300  # Need 5+ min remaining to trade
+    hold_if_confirmed: bool = True  # Hold to expiry if 90%+ probability
+    confirmed_threshold: float = 0.90  # Price above this = confirmed winner
+    markets: list = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+    position_size_pct: float = 2.0  # % of account per trade
+    max_position_usd: float = 100.0  # Hard cap per position
+    slippage_buffer_pct: float = 1.5  # Buffer for slippage/fees
+    cooldown_sec: int = 30  # Cooldown between trades per symbol
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LatencyArbConfig":
+        return cls(**data)
+
+
+class LatencyArbStrategy:
+    """
+    Latency Arbitrage Strategy implementation.
+
+    Exploits the lag between Binance spot moves and Polymarket odds adjustment.
+    Triggers immediately when Binance move exceeds threshold.
+    """
+
+    def __init__(self, config: Optional[LatencyArbConfig] = None):
+        self.config = config or LatencyArbConfig()
+        # Track Binance prices at market start: {symbol_market_start: price}
+        self._binance_opens: dict[str, float] = {}
+        # Track positions: {symbol_market_start: {"side": str, "entry_price": float, "entry_time": int}}
+        self._positions: dict[str, dict] = {}
+        # Track last trade time per symbol for cooldown
+        self._last_trade: dict[str, int] = {}
+        # Closed positions (to avoid re-entry)
+        self._closed: set[str] = set()
+
+    def record_binance_open(self, symbol: str, market_start: int, price: float):
+        """Record Binance price at market window start"""
+        key = f"{symbol}_{market_start}"
+        if key not in self._binance_opens:
+            self._binance_opens[key] = price
+
+    def check_entry_signal(
+        self,
+        symbol: str,
+        binance_price: float,
+        up_price: float,
+        down_price: float,
+        elapsed_sec: int,
+        market_start: int,
+        market_end: int,
+        current_time: int,
+    ) -> Optional[dict]:
+        """
+        Check if latency arb entry conditions are met.
+
+        Returns:
+            {"side": "UP"/"DOWN", "entry_price": float, "binance_move_pct": float} or None
+        """
+        if not self.config.enabled:
+            return None
+
+        if symbol not in self.config.markets:
+            return None
+
+        position_key = f"{symbol}_{market_start}"
+
+        # Skip if already have position or closed
+        if position_key in self._positions or position_key in self._closed:
+            return None
+
+        # Check cooldown
+        last = self._last_trade.get(symbol, 0)
+        if current_time - last < self.config.cooldown_sec:
+            return None
+
+        # Check time remaining
+        time_remaining = market_end - current_time
+        if time_remaining < self.config.min_time_remaining_sec:
+            return None
+
+        # Get Binance open price
+        binance_open = self._binance_opens.get(position_key)
+        if not binance_open or binance_open == 0:
+            return None
+
+        # Calculate Binance move
+        move_pct = ((binance_price - binance_open) / binance_open) * 100
+
+        # Check if move exceeds threshold
+        if abs(move_pct) < self.config.min_move_pct:
+            return None
+
+        # Determine side based on Binance move
+        if move_pct > 0:
+            # Binance UP → buy UP on Polymarket
+            side = "UP"
+            entry_price = up_price
+        else:
+            # Binance DOWN → buy DOWN on Polymarket
+            side = "DOWN"
+            entry_price = down_price
+
+        # Check max entry price (don't chase high prices)
+        if entry_price > self.config.max_entry_price:
+            return None
+
+        # Account for slippage buffer
+        effective_cost = entry_price * (1 + self.config.slippage_buffer_pct / 100)
+        if effective_cost > self.config.max_entry_price:
+            return None
+
+        return {
+            "side": side,
+            "entry_price": entry_price,
+            "binance_move_pct": move_pct,
+            "binance_open": binance_open,
+            "binance_current": binance_price,
+        }
+
+    def check_exit_signal(
+        self,
+        symbol: str,
+        up_price: float,
+        down_price: float,
+        market_start: int,
+    ) -> Optional[dict]:
+        """
+        Check if we should exit a position early (take profit).
+
+        Returns:
+            {"action": "take_profit"/"hold_confirmed", "current_price": float, "return_pct": float} or None
+        """
+        position_key = f"{symbol}_{market_start}"
+        position = self._positions.get(position_key)
+
+        if not position:
+            return None
+
+        side = position["side"]
+        entry_price = position["entry_price"]
+        current_price = up_price if side == "UP" else down_price
+
+        # Calculate return (assuming $1 payout)
+        # Return = (current_price - entry_price) / entry_price
+        if entry_price > 0:
+            return_pct = ((current_price - entry_price) / entry_price) * 100
+        else:
+            return_pct = 0
+
+        # Check if confirmed winner (hold to expiry)
+        if self.config.hold_if_confirmed and current_price >= self.config.confirmed_threshold:
+            return {
+                "action": "hold_confirmed",
+                "current_price": current_price,
+                "return_pct": return_pct,
+                "reason": f"Holding confirmed winner at {current_price:.1%}",
+            }
+
+        # Check take profit
+        if return_pct >= self.config.take_profit_pct:
+            return {
+                "action": "take_profit",
+                "current_price": current_price,
+                "return_pct": return_pct,
+                "reason": f"Taking profit at {return_pct:.1f}% return",
+            }
+
+        return None
+
+    def record_entry(self, symbol: str, market_start: int, side: str, entry_price: float, timestamp: int):
+        """Record position entry"""
+        position_key = f"{symbol}_{market_start}"
+        self._positions[position_key] = {
+            "side": side,
+            "entry_price": entry_price,
+            "entry_time": timestamp,
+        }
+        self._last_trade[symbol] = timestamp
+
+    def record_exit(self, symbol: str, market_start: int):
+        """Record position exit"""
+        position_key = f"{symbol}_{market_start}"
+        self._closed.add(position_key)
+        if position_key in self._positions:
+            del self._positions[position_key]
+
+    def get_open_positions(self) -> dict:
+        """Get all open positions"""
+        return self._positions.copy()
+
+    def cleanup_old_data(self, current_time: int):
+        """Remove old data (markets that have ended)"""
+        cutoff = current_time - 1800  # 30 minutes
+
+        self._binance_opens = {
+            k: v for k, v in self._binance_opens.items()
+            if int(k.split("_")[1]) > cutoff
+        }
+        self._positions = {
+            k: v for k, v in self._positions.items()
+            if int(k.split("_")[1]) > cutoff
+        }
+        self._closed = {
+            k for k in self._closed
+            if int(k.split("_")[1]) > cutoff
+        }
+
+    def get_position_size(self, account_balance: float) -> float:
+        """Calculate position size based on config"""
+        pct_based = account_balance * (self.config.position_size_pct / 100.0)
+        return min(pct_based, self.config.max_position_usd)
+
+
+# ============================================================================
 # TRADING SIGNALS
 # ============================================================================
 
@@ -1632,3 +2486,146 @@ class TradingEngine:
         )
 
         return signal
+
+
+# ============================================================================
+# ORDER RETRY MANAGER
+# ============================================================================
+
+@dataclass
+class OrderRetryConfig:
+    """Configuration for order retry logic"""
+    max_retries: int = 3
+    retry_delay_sec: float = 0.3  # Brief pause to let orderbook refresh (not backoff - liquidity issue)
+    max_price_move_pct: float = 5.0  # Cancel if price moves more than this
+    min_time_remaining_sec: int = 30  # Don't retry if < 30s remaining
+
+
+@dataclass
+class OrderAttempt:
+    """Record of a single order attempt"""
+    attempt_num: int
+    timestamp: float
+    price: float
+    success: bool
+    error: Optional[str] = None
+    retry_validation: Optional[str] = None  # Result of validation check
+
+
+class OrderRetryManager:
+    """
+    Manages order execution with retry logic and signal validation.
+
+    On each retry (for liquidity/matching failures, not rate limits):
+    1. Brief pause to let orderbook refresh
+    2. Re-fetch current price
+    3. Re-validate that the signal is still valid (price in range, EV > threshold)
+    4. If valid, retry the order at new price
+    5. If invalid, abort - market moved against us
+    """
+
+    def __init__(self, config: Optional[OrderRetryConfig] = None):
+        self.config = config or OrderRetryConfig()
+        self.attempts: list[OrderAttempt] = []
+
+    async def execute_with_retry(
+        self,
+        execute_fn: Callable[[float], Any],  # Function that takes price and returns result
+        get_current_price_fn: Callable[[], Optional[float]],  # Get latest price
+        validate_fn: Callable[[float], tuple[bool, str]],  # Validate if retry is OK
+        initial_price: float,
+        get_elapsed_sec_fn: Optional[Callable[[], int]] = None,  # Get current elapsed time
+    ) -> tuple[bool, list[OrderAttempt]]:
+        """
+        Execute an order with retry logic.
+
+        Args:
+            execute_fn: Async function to execute order, takes price as arg
+            get_current_price_fn: Function to get current market price
+            validate_fn: Function to validate if retry is valid, returns (is_valid, reason)
+            initial_price: Initial price for first attempt
+            get_elapsed_sec_fn: Optional function to get elapsed seconds (for time validation)
+
+        Returns:
+            Tuple of (success, list of attempts)
+        """
+        import asyncio
+
+        self.attempts = []
+        current_price = initial_price
+
+        for attempt in range(self.config.max_retries):
+            # Check time remaining (if we can)
+            if get_elapsed_sec_fn:
+                elapsed = get_elapsed_sec_fn()
+                remaining = 900 - elapsed
+                if remaining < self.config.min_time_remaining_sec:
+                    self.attempts.append(OrderAttempt(
+                        attempt_num=attempt + 1,
+                        timestamp=time.time(),
+                        price=current_price,
+                        success=False,
+                        error=f"Only {remaining}s remaining - aborting",
+                        retry_validation="time_expired"
+                    ))
+                    break
+
+            # On retry (not first attempt), validate signal is still valid
+            if attempt > 0:
+                # Get fresh price
+                fresh_price = get_current_price_fn()
+                if fresh_price is None:
+                    self.attempts.append(OrderAttempt(
+                        attempt_num=attempt + 1,
+                        timestamp=time.time(),
+                        price=current_price,
+                        success=False,
+                        error="Failed to get current price for retry",
+                        retry_validation="price_fetch_failed"
+                    ))
+                    continue  # Try again
+
+                current_price = fresh_price
+
+                # Validate the retry
+                is_valid, reason = validate_fn(current_price)
+                if not is_valid:
+                    self.attempts.append(OrderAttempt(
+                        attempt_num=attempt + 1,
+                        timestamp=time.time(),
+                        price=current_price,
+                        success=False,
+                        error=f"Retry validation failed: {reason}",
+                        retry_validation=reason
+                    ))
+                    print(f"[OrderRetry] Attempt {attempt + 1} CANCELLED: {reason}")
+                    break  # Don't retry - signal no longer valid
+
+            # Attempt to execute
+            try:
+                result = await execute_fn(current_price)
+                self.attempts.append(OrderAttempt(
+                    attempt_num=attempt + 1,
+                    timestamp=time.time(),
+                    price=current_price,
+                    success=True,
+                ))
+                print(f"[OrderRetry] Attempt {attempt + 1} SUCCESS at {current_price:.1%}")
+                return (True, self.attempts)
+
+            except Exception as e:
+                error_msg = str(e)
+                self.attempts.append(OrderAttempt(
+                    attempt_num=attempt + 1,
+                    timestamp=time.time(),
+                    price=current_price,
+                    success=False,
+                    error=error_msg,
+                ))
+                print(f"[OrderRetry] Attempt {attempt + 1} FAILED: {error_msg}")
+
+                # Brief pause to let orderbook refresh (not backoff - this is liquidity issue)
+                if attempt < self.config.max_retries - 1:
+                    await asyncio.sleep(self.config.retry_delay_sec)
+
+        return (False, self.attempts)

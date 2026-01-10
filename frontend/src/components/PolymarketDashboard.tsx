@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CountdownTimerBadgeCompact } from "@/components/ui/countdown-timer-badge";
+import { FlipCountdown } from "@/components/ui/flip-countdown";
 import { SimpleTooltip } from "@/components/ui/tooltip";
 import { SimpleStreamingChart } from "@/components/charts/SimpleStreamingChart";
 import { MarketAnalysis } from "@/components/charts/MarketAnalysis";
@@ -137,14 +138,6 @@ export function PolymarketDashboard({
                     </Badge>
                   )}
                 </div>
-                {/* Countdown timer badge - show time remaining */}
-                {timing?.is_open && market && (
-                  <SimpleTooltip content="Time remaining until market closes">
-                    <CountdownTimerBadgeCompact
-                      seconds={Math.max(0, market.end_time - Math.floor(now / 1000))}
-                    />
-                  </SimpleTooltip>
-                )}
               </div>
 
               {/* Odds row */}
@@ -188,37 +181,33 @@ export function PolymarketDashboard({
       {/* Detail view for selected symbol */}
       <Card className="bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
         <CardContent className="p-4 space-y-4">
-          {/* Market header with readable slug */}
+          {/* Market header with slug, countdown (centered), and prices */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="font-semibold text-lg">
-                {currentMarket
-                  ? formatMarketSlugET(selectedSymbol, currentMarket.start_time)
-                  : selectedSymbol}
-              </span>
-              {selectedMomentum && (
-                <Badge
-                  className={`${
-                    selectedMomentum.direction === "UP"
-                      ? "bg-green-500 text-white"
-                      : selectedMomentum.direction === "DOWN"
-                      ? "bg-red-500 text-white"
-                      : "bg-zinc-600 text-white"
-                  }`}
-                >
-                  {selectedMomentum.direction}
-                </Badge>
-              )}
-            </div>
+            {/* Left: Market title */}
+            <span className="font-semibold text-lg">
+              {currentMarket
+                ? `${selectedSymbol.toLowerCase()}-updown-15m @ ${new Date(currentMarket.start_time * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} ET`
+                : selectedSymbol}
+            </span>
+            {/* Center: Flip countdown timer */}
+            {timing?.is_open && currentMarket && (
+              <SimpleTooltip content="Time remaining until market closes">
+                <div className="cursor-help">
+                  <FlipCountdown
+                    seconds={Math.max(0, currentMarket.end_time - Math.floor(Date.now() / 1000))}
+                  />
+                </div>
+              </SimpleTooltip>
+            )}
             {currentMarket && (
               <div className="flex items-center gap-3 text-sm">
                 <SimpleTooltip content={`UP token price: $${currentMarket.price.toFixed(3)} - implied ${(currentMarket.price * 100).toFixed(1)}% chance of price increase`}>
-                  <span className="text-green-500 font-mono cursor-help">
+                  <span className="text-green-500 font-mono font-bold cursor-help">
                     UP: ${currentMarket.price.toFixed(2)}
                   </span>
                 </SimpleTooltip>
                 <SimpleTooltip content={`DOWN token price: $${(1 - currentMarket.price).toFixed(3)} - implied ${((1 - currentMarket.price) * 100).toFixed(1)}% chance of price decrease`}>
-                  <span className="text-red-500 font-mono cursor-help">
+                  <span className="text-red-500 font-mono font-bold cursor-help">
                     DOWN: ${(1 - currentMarket.price).toFixed(2)}
                   </span>
                 </SimpleTooltip>
@@ -248,7 +237,7 @@ export function PolymarketDashboard({
                 marketStart={currentMarket?.start_time}
                 marketEnd={currentMarket?.end_time}
                 showPriceToBeat={true}
-                showCheckpoints={true}
+                showCheckpoints={false}  // Only needed for latency_gap strategy
                 signals={signals}
                 momentum={selectedMomentum}
               />
@@ -335,11 +324,6 @@ export function PolymarketDashboard({
 
         </CardContent>
       </Card>
-
-      {/* Footer legend */}
-      <div className="text-xs text-zinc-500 text-center">
-        Markets open at :00, :15, :30, :45 each hour
-      </div>
     </div>
   );
 }
